@@ -63,6 +63,75 @@ function jsRuntimeArgs(): string[] {
   return ["--js-runtimes", `node:${process.execPath}`];
 }
 
+/**
+ * TikTok fingerprints the TLS handshake and 403s clients that don't look like
+ * a real browser — the same link that fails bare downloads cleanly with
+ * `--impersonate chrome` (curl_cffi presents a genuine Chrome handshake).
+ * Scoped to TikTok rather than applied globally because impersonation reroutes
+ * all traffic through curl_cffi, which has its own protocol limitations and
+ * isn't bundled in every yt-dlp build.
+ */
+const IMPERSONATED_HOSTS = /(^|\.)(tiktok\.com|douyin\.com)$/i;
+
+function hostMatches(url: string, hosts: RegExp): boolean {
+  try {
+    return hosts.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function needsImpersonation(url: string): boolean {
+  return hostMatches(url, IMPERSONATED_HOSTS);
+}
+
+/**
+ * TikTok's refusals are stochastic and escalate with request volume. At a calm
+ * baseline, impersonation flips most blocks (a link that 403s bare extracts
+ * cleanly under a Chrome handshake moments later), and a request refused under
+ * one fingerprint often passes under another — so the one retry switches
+ * fingerprints rather than repeating identical odds. Under sustained traffic
+ * TikTok blocks regardless of fingerprint; nothing client-side clears that,
+ * and the honest "try again later" error is the right answer. (The mobile-API
+ * extractor args are NOT a way out: the unauthenticated app API returns empty
+ * responses and yt-dlp silently falls back to the same blocked webpage.)
+ */
+const RETRY_IMPERSONATE_TARGET = "safari";
+
+function rotateImpersonation(argv: string[]): string[] {
+  const i = argv.indexOf("--impersonate");
+  if (i === -1 || i + 1 >= argv.length) return argv;
+  const next = [...argv];
+  next[i + 1] = RETRY_IMPERSONATE_TARGET;
+  return next;
+}
+
+// Keyed by binary path so a swapped-in yt-dlp gets re-probed.
+const impersonationSupport = new Map<string, Promise<boolean>>();
+
+/** Whether this yt-dlp build ships curl_cffi (probed once, cached). */
+function supportsImpersonation(bin: string): Promise<boolean> {
+  let cached = impersonationSupport.get(bin);
+  if (!cached) {
+    cached = new Promise((resolve) => {
+      execFile(
+        bin,
+        ["--list-impersonate-targets"],
+        { timeout: 15_000, windowsHide: true },
+        (err, out) => resolve(!err && /curl_cffi/i.test(String(out))),
+      );
+    });
+    impersonationSupport.set(bin, cached);
+  }
+  return cached;
+}
+
+async function impersonationArgs(bin: string, url: string): Promise<string[]> {
+  if (!needsImpersonation(url)) return [];
+  // "chrome" (no version) lets yt-dlp pick the best available Chrome target.
+  return (await supportsImpersonation(bin)) ? ["--impersonate", "chrome"] : [];
+}
+
 function runInfoOnce(bin: string, args: string[]): Promise<RawInfo> {
   return new Promise<string>((resolve, reject) => {
     execFile(
@@ -98,6 +167,10 @@ function runInfoOnce(bin: string, args: string[]): Promise<RawInfo> {
  * before an error, and the honest message already invites them to try again —
  * a manual retry naturally lands outside the window. Only block/rate-limit
  * answers requalify; a missing or unsupported video still fails on first pass.
+ *
+ * For impersonated sites the retry isn't a pure repeat: it presents a
+ * different browser fingerprint (see rotateImpersonation), which the site
+ * scores separately, so the second attempt isn't bound to the first's odds.
  */
 const INFO_ATTEMPTS = 2;
 const RETRY_BASE_MS = 2_500;
@@ -106,13 +179,14 @@ function isRetryable(err: unknown): boolean {
   return err instanceof AppError && (err.code === "BLOCKED" || err.code === "RATE_LIMITED");
 }
 
-async function runInfoJson(args: string[]): Promise<RawInfo> {
+async function runInfoJson(url: string, args: string[]): Promise<RawInfo> {
   const bins = await resolveBinaries();
   if (!bins.ytdlp.found || !bins.ytdlp.path) throw YTDLP_MISSING();
+  const argv = [...args, ...(await impersonationArgs(bins.ytdlp.path, url)), url];
 
   for (let attempt = 1; ; attempt++) {
     try {
-      return await runInfoOnce(bins.ytdlp.path, args);
+      return await runInfoOnce(bins.ytdlp.path, attempt > 1 ? rotateImpersonation(argv) : argv);
     } catch (err) {
       if (attempt >= INFO_ATTEMPTS || !isRetryable(err)) throw err;
       await new Promise((r) => setTimeout(r, RETRY_BASE_MS * attempt));
@@ -121,7 +195,7 @@ async function runInfoJson(args: string[]): Promise<RawInfo> {
 }
 
 export async function fetchVideoInfo(url: string): Promise<VideoInfo> {
-  let raw = await runInfoJson(["-J", "--no-playlist", "--no-warnings", ...jsRuntimeArgs(), url]);
+  let raw = await runInfoJson(url, ["-J", "--no-playlist", "--no-warnings", ...jsRuntimeArgs()]);
   if (raw._type === "playlist") raw = firstEntry(raw) ?? raw;
   return normalize(raw, url);
 }
@@ -132,13 +206,7 @@ export async function fetchVideoInfo(url: string): Promise<VideoInfo> {
  * or a pure playlist page. Uses a cheap `--flat-playlist` probe first.
  */
 export async function fetchInfo(url: string): Promise<InfoResult> {
-  const flat = await runInfoJson([
-    "-J",
-    "--flat-playlist",
-    "--no-warnings",
-    ...jsRuntimeArgs(),
-    url,
-  ]);
+  const flat = await runInfoJson(url, ["-J", "--flat-playlist", "--no-warnings", ...jsRuntimeArgs()]);
 
   const entries = (flat.entries ?? []).filter((e): e is RawInfo => !!e);
   if (flat._type === "playlist" && entries.length > 0) {
@@ -401,7 +469,7 @@ export async function startDownload(job: InternalJob, opts: DownloadOptions): Pr
   }
 
   const args = buildArgs(job, opts, ffmpegPath);
-  args.push(job.url);
+  args.push(...(await impersonationArgs(bins.ytdlp.path, job.url)), job.url);
 
   // Kept on the job so a paused download can be respawned byte-for-byte.
   job.bin = bins.ytdlp.path;
@@ -695,6 +763,17 @@ function finalize(job: InternalJob, code: number | null): void {
     }
     job.status = "error";
     job.error = "Download finished but the output file could not be located.";
+    return;
+  }
+  // A block at download time gets one respawn under a different browser
+  // fingerprint before the job is failed — same rationale as the info retry.
+  const status = httpStatus(job.error ?? "");
+  const rotated = job.argv ? rotateImpersonation(job.argv) : undefined;
+  if ((status === 401 || status === 403) && !job.retriedBlocked && rotated !== job.argv) {
+    job.retriedBlocked = true;
+    job.error = undefined;
+    job.argv = rotated;
+    spawnYtdlp(job);
     return;
   }
   job.status = "error";

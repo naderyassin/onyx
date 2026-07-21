@@ -41,6 +41,8 @@ export interface InternalJob {
   /** yt-dlp binary and full argv, kept so a paused job can be respawned as-is. */
   bin?: string;
   argv?: string[];
+  /** One-shot respawn under a different browser fingerprint after a block. */
+  retriedBlocked?: boolean;
   /** Whole-playlist job — downloads into `contentDir`, then gets zipped. */
   isPlaylist?: boolean;
   /** Where yt-dlp writes files (a subdir for playlists, `dir` otherwise). */
