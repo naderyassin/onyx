@@ -2,9 +2,19 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowDownToLine, Check, Clapperboard, RotateCcw, TriangleAlert, X } from "lucide-react";
+import { ArrowDownToLine, Check, Clapperboard, RotateCcw, TriangleAlert } from "lucide-react";
+import {
+  elapsedItem,
+  isStalled,
+  JobControls,
+  ProgressBar,
+  ResumeHint,
+  StallNotice,
+  StatRow,
+  transferItems,
+} from "@/components/home/progress-readout";
 import { Button } from "@/components/ui/button";
-import { formatBytes, formatDuration, formatEta, formatSpeed } from "@/lib/format";
+import { formatBytes, formatDuration } from "@/lib/format";
 import { cardReveal, SPRING } from "@/lib/motion";
 import type { AudioFormat, DownloadMode, JobState, VideoInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -20,6 +30,8 @@ interface VideoCardProps {
   onSelectAudioFormat: (format: AudioFormat) => void;
   job: JobState | null;
   onDownload: () => void;
+  onPause: () => void;
+  onResume: () => void;
   onCancel: () => void;
   onSaveAgain: () => void;
   onReset: () => void;
@@ -128,50 +140,60 @@ function QualityPicker({
   );
 }
 
-function ProgressPanel({ job, onCancel }: { job: JobState; onCancel: () => void }) {
+function ProgressPanel({
+  job,
+  onPause,
+  onResume,
+  onCancel,
+}: {
+  job: JobState;
+  onPause: () => void;
+  onResume: () => void;
+  onCancel: () => void;
+}) {
   const processing = job.status === "processing";
-  const statusLabel =
-    job.status === "starting" ? "Starting…" : processing ? "Merging & processing…" : "Downloading";
+  const starting = job.status === "starting";
+  const paused = job.status === "paused";
+  const stalled = isStalled(job);
+  const statusLabel = paused
+    ? "Paused"
+    : starting
+      ? "Starting…"
+      : processing
+        ? "Merging & processing…"
+        : "Downloading";
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">{statusLabel}</p>
           <p className="mt-1 truncate font-mono text-xs text-white/50">
             {processing
               ? "Almost done — FFmpeg is finishing the file"
-              : `${Math.round(job.progress)}% · ${formatBytes(job.downloadedBytes)}${
-                  job.totalBytes ? ` of ${formatBytes(job.totalBytes)}` : ""
-                } · ${formatSpeed(job.speedBps)} · ${formatEta(job.etaSec)} left`}
+              : starting
+                ? "Asking the site for the stream…"
+                : `${Math.round(job.progress)}% complete`}
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onCancel}
-          aria-label="Cancel download"
-          className="size-9 rounded-lg text-white/50 hover:text-white"
-        >
-          <X />
-        </Button>
+        <JobControls job={job} onPause={onPause} onResume={onResume} onCancel={onCancel} />
       </div>
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
-        {processing ? (
-          <motion.div
-            className="h-full w-1/3 rounded-full bg-white/80"
-            animate={{ x: ["-120%", "320%"] }}
-            transition={{ repeat: Infinity, duration: 1.1, ease: "easeInOut" }}
-          />
-        ) : (
-          <motion.div
-            className="h-full rounded-full bg-white"
-            initial={{ width: 0 }}
-            animate={{ width: `${job.progress}%` }}
-            transition={{ ease: "easeOut", duration: 0.3 }}
-          />
-        )}
+
+      <div className="mt-3">
+        <ProgressBar
+          value={job.progress}
+          indeterminate={processing}
+          stalled={stalled}
+          paused={paused}
+        />
       </div>
+
+      {!processing && (
+        <StatRow className="mt-2.5" items={[...transferItems(job), elapsedItem(job)]} />
+      )}
+
+      {stalled && <StallNotice seconds={job.stalledSec ?? 0} />}
+      {paused && <ResumeHint />}
     </div>
   );
 }
@@ -199,7 +221,8 @@ function DonePanel({
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">{job.fileName ?? "File saved"}</p>
           <p className="font-mono text-xs text-white/50">
-            {formatBytes(job.fileSize)} · sent to your browser&apos;s downloads
+            {formatBytes(job.fileSize)}
+            {" · sent to your browser's downloads"}
           </p>
         </div>
       </div>
@@ -250,6 +273,8 @@ export function VideoCard(props: VideoCardProps) {
     audioFormat,
     job,
     onDownload,
+    onPause,
+    onResume,
     onCancel,
     onSaveAgain,
     onReset,
@@ -265,7 +290,7 @@ export function VideoCard(props: VideoCardProps) {
         : { bytes: info.autoEstBytes, approx: true };
   const extLabel = mode === "audio" ? audioFormat : "mp4";
 
-  const jobBusy = !!job && (job.status === "starting" || job.status === "downloading" || job.status === "processing");
+  const jobBusy = !!job && !["complete", "error", "canceled"].includes(job.status);
   const panel: "cta" | "progress" | "done" | "failed" = !job
     ? "cta"
     : job.status === "complete"
@@ -312,7 +337,14 @@ export function VideoCard(props: VideoCardProps) {
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.22 }}
           >
-            {panel === "progress" && job && <ProgressPanel job={job} onCancel={onCancel} />}
+            {panel === "progress" && job && (
+              <ProgressPanel
+                job={job}
+                onPause={onPause}
+                onResume={onResume}
+                onCancel={onCancel}
+              />
+            )}
             {panel === "done" && job && (
               <DonePanel job={job} onSaveAgain={onSaveAgain} onReset={onReset} />
             )}

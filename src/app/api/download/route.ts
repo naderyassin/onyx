@@ -16,6 +16,7 @@ interface DownloadBody {
   mode?: unknown;
   height?: unknown;
   audioFormat?: unknown;
+  playlist?: unknown;
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -53,9 +54,11 @@ export async function POST(req: Request): Promise<NextResponse> {
     ? (body.audioFormat as AudioFormat)
     : "mp3";
 
-  const job = createJob(parsed.toString(), mode);
+  const playlist = body.playlist === true;
+
+  const job = createJob(parsed.toString(), mode, playlist);
   try {
-    await startDownload(job, { mode, height, audioFormat });
+    await startDownload(job, { mode, height, audioFormat, playlist });
   } catch (err) {
     destroyJob(job.id);
     if (err instanceof AppError) {

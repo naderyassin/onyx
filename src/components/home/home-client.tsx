@@ -6,7 +6,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { LogoMark } from "@/components/logo";
 import { BinaryNotice } from "@/components/home/binary-notice";
-import { ModeSelector } from "@/components/home/mode-selector";
+import { ModeSelector, MODE_ITEMS, type ModeItem } from "@/components/home/mode-selector";
+import { PlaylistCard } from "@/components/home/playlist-card";
 import { UrlBar } from "@/components/home/url-bar";
 import { VideoCard, VideoCardSkeleton } from "@/components/home/video-card";
 import { useDownload } from "@/hooks/use-download";
@@ -14,8 +15,14 @@ import { useVideoInfo } from "@/hooks/use-video-info";
 import { fadeRise } from "@/lib/motion";
 import { getSettings } from "@/lib/settings";
 import { TOTAL_SUPPORTED_LABEL } from "@/lib/sites";
-import type { AudioFormat, DownloadMode } from "@/lib/types";
+import type { AudioFormat, DownloadMode, PlaylistInfo, SelectableMode } from "@/lib/types";
 import { isValidUrl, normalizeUrl } from "@/lib/validate";
+
+const BASE_MODE_ITEMS: ModeItem<SelectableMode>[] = [
+  MODE_ITEMS.auto,
+  MODE_ITEMS.video,
+  MODE_ITEMS.audio,
+];
 
 export function HomeClient() {
   const searchParams = useSearchParams();
@@ -23,10 +30,23 @@ export function HomeClient() {
   const dl = useDownload();
 
   const [url, setUrl] = useState("");
-  const [mode, setMode] = useState<DownloadMode>("auto");
+  const [mode, setMode] = useState<SelectableMode>("auto");
   const [selectedHeight, setSelectedHeight] = useState<number | undefined>();
   const [audioFormat, setAudioFormat] = useState<AudioFormat>("mp3");
+  // Whole-playlist controls (used by the Playlist mode / a pure playlist card).
+  const [playlistItemMode, setPlaylistItemMode] = useState<DownloadMode>("auto");
+  const [playlistHeight, setPlaylistHeight] = useState<number | undefined>(undefined);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const data = info.data;
+  const playlistData: PlaylistInfo | null =
+    data?.kind === "playlist" ? data : data?.kind === "video" ? (data.playlist ?? null) : null;
+  const showPlaylist =
+    data?.kind === "playlist" || (data?.kind === "video" && mode === "playlist" && !!data.playlist);
+  const modeItems: ModeItem<SelectableMode>[] =
+    data?.kind === "video" && data.playlist
+      ? [...BASE_MODE_ITEMS, MODE_ITEMS.playlist]
+      : BASE_MODE_ITEMS;
 
   const { fetchInfo, clear: clearInfo } = info;
   const { reset: resetDl, active: dlActive } = dl;
@@ -54,7 +74,21 @@ export function HomeClient() {
     const settings = getSettings();
     setMode(settings.defaultMode);
     setAudioFormat(settings.audioFormat);
+    setPlaylistItemMode(
+      settings.defaultMode === "video" || settings.defaultMode === "audio"
+        ? settings.defaultMode
+        : "auto",
+    );
+    setPlaylistHeight(settings.videoQuality === "best" ? undefined : Number(settings.videoQuality));
   }, []);
+
+  // "Playlist" mode only exists while a playlist is attached — fall back if the
+  // loaded link is a plain single video.
+  useEffect(() => {
+    if (mode === "playlist" && !(data?.kind === "video" && data.playlist)) {
+      setMode(getSettings().defaultMode);
+    }
+  }, [data, mode]);
 
   // Support /?url=… deep links (used by "Download again" in History).
   useEffect(() => {
@@ -85,7 +119,7 @@ export function HomeClient() {
   // Preselect a quality when new info arrives, honoring the saved preference.
   useEffect(() => {
     const data = info.data;
-    if (!data) return;
+    if (!data || data.kind !== "video") return;
     const heights = data.qualities.map((q) => q.height);
     if (!heights.length) {
       setSelectedHeight(undefined);
@@ -127,13 +161,47 @@ export function HomeClient() {
   const handleDownload = () => {
     const data = info.data;
     if (!data) return;
+
+    if (showPlaylist && playlistData) {
+      const itemMode = playlistItemMode;
+      const label =
+        itemMode === "audio"
+          ? audioFormat.toUpperCase()
+          : itemMode === "video"
+            ? playlistHeight
+              ? `${playlistHeight}p`
+              : "Best"
+            : "Auto";
+      void dl.start({
+        url: playlistData.sourceUrl,
+        mode: itemMode,
+        height: itemMode === "video" ? playlistHeight : undefined,
+        audioFormat,
+        playlist: true,
+        meta: {
+          title: playlistData.title,
+          uploader: playlistData.uploader,
+          thumbnailUrl: playlistData.thumbnailUrl,
+          extractor: playlistData.extractor,
+          qualityLabel: `Playlist · ${label}`,
+        },
+      });
+      return;
+    }
+
+    if (data.kind !== "video") return;
+    const singleMode = mode as DownloadMode;
     const selectedLabel = data.qualities.find((q) => q.height === selectedHeight)?.label;
     const qualityLabel =
-      mode === "audio" ? audioFormat.toUpperCase() : mode === "video" ? (selectedLabel ?? "Best") : "Auto";
+      singleMode === "audio"
+        ? audioFormat.toUpperCase()
+        : singleMode === "video"
+          ? (selectedLabel ?? "Best")
+          : "Auto";
     void dl.start({
       url: data.sourceUrl,
-      mode,
-      height: mode === "video" ? selectedHeight : undefined,
+      mode: singleMode,
+      height: singleMode === "video" ? selectedHeight : undefined,
       audioFormat,
       meta: {
         title: data.title,
@@ -195,9 +263,16 @@ export function HomeClient() {
           />
         </motion.div>
 
-        <motion.div custom={4} variants={fadeRise} className="mt-5">
-          <ModeSelector value={mode} onChange={setMode} layoutId="home-mode" />
-        </motion.div>
+        {data?.kind !== "playlist" && (
+          <motion.div custom={4} variants={fadeRise} className="mt-5">
+            <ModeSelector
+              value={mode}
+              onChange={setMode}
+              items={modeItems}
+              layoutId="home-mode"
+            />
+          </motion.div>
+        )}
 
         <BinaryNotice />
 
@@ -217,22 +292,44 @@ export function HomeClient() {
                 {info.error}
               </motion.p>
             )}
-            {info.state === "success" && info.data && (
-              <VideoCard
-                key={info.data.id}
-                info={info.data}
-                mode={mode}
-                selectedHeight={selectedHeight}
-                onSelectHeight={setSelectedHeight}
-                audioFormat={audioFormat}
-                onSelectAudioFormat={setAudioFormat}
-                job={dl.job}
-                onDownload={handleDownload}
-                onCancel={() => void dl.cancel()}
-                onSaveAgain={dl.saveAgain}
-                onReset={handleReset}
-              />
-            )}
+            {info.state === "success" &&
+              data &&
+              (showPlaylist && playlistData ? (
+                <PlaylistCard
+                  key={`playlist-${playlistData.id}`}
+                  playlist={playlistData}
+                  itemMode={playlistItemMode}
+                  onSelectItemMode={setPlaylistItemMode}
+                  height={playlistHeight}
+                  onSelectHeight={setPlaylistHeight}
+                  audioFormat={audioFormat}
+                  onSelectAudioFormat={setAudioFormat}
+                  job={dl.job}
+                  onDownload={handleDownload}
+                  onPause={() => void dl.pause()}
+                  onResume={() => void dl.resume()}
+                  onCancel={() => void dl.cancel()}
+                  onSaveAgain={dl.saveAgain}
+                  onReset={handleReset}
+                />
+              ) : data.kind === "video" ? (
+                <VideoCard
+                  key={data.id}
+                  info={data}
+                  mode={mode as DownloadMode}
+                  selectedHeight={selectedHeight}
+                  onSelectHeight={setSelectedHeight}
+                  audioFormat={audioFormat}
+                  onSelectAudioFormat={setAudioFormat}
+                  job={dl.job}
+                  onDownload={handleDownload}
+                  onPause={() => void dl.pause()}
+                  onResume={() => void dl.resume()}
+                  onCancel={() => void dl.cancel()}
+                  onSaveAgain={dl.saveAgain}
+                  onReset={handleReset}
+                />
+              ) : null)}
           </AnimatePresence>
         </div>
       </motion.div>

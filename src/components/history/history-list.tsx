@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Film,
   History,
+  ListVideo,
   RotateCcw,
   Sparkles,
   Trash2,
@@ -21,12 +22,13 @@ import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { formatBytes, timeAgo } from "@/lib/format";
 import { clearHistory, removeHistoryEntry, useHistory } from "@/lib/history";
-import type { DownloadMode, HistoryEntry } from "@/lib/types";
+import type { HistoryEntry, SelectableMode } from "@/lib/types";
 
-const MODE_ICON: Record<DownloadMode, LucideIcon> = {
+const MODE_ICON: Record<SelectableMode, LucideIcon> = {
   auto: Sparkles,
   video: Film,
   audio: AudioLines,
+  playlist: ListVideo,
 };
 
 function ItemThumb({ entry }: { entry: HistoryEntry }) {

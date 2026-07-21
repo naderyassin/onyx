@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { Globe, History, House, Settings2, type LucideIcon } from "lucide-react";
-import { LogoMark, Wordmark } from "@/components/logo";
 import { EASE_OUT, SPRING } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
@@ -33,15 +32,6 @@ export function Navbar() {
         className="flex items-center gap-0.5 rounded-full border border-white/10 bg-black/55 p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.45)] backdrop-blur-xl"
         aria-label="Main navigation"
       >
-        <Link
-          href="/"
-          aria-label="Onyx home"
-          className="mr-1 flex items-center gap-2.5 rounded-full py-1 pl-1.5 pr-2 transition-opacity hover:opacity-80"
-        >
-          <LogoMark className="size-7 rounded-lg" iconClassName="size-3.5" />
-          <Wordmark className="hidden text-lg sm:block" />
-        </Link>
-
         {LINKS.map((link) => {
           const active = pathname === link.href;
           const Icon = link.icon;

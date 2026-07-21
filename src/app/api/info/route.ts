@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { normalizeUrl } from "@/lib/validate";
 import { AppError } from "@/lib/server/errors";
 import { parsePublicHttpUrl } from "@/lib/server/net";
-import { fetchVideoInfo } from "@/lib/server/ytdlp";
+import { fetchInfo } from "@/lib/server/ytdlp";
 
 export const runtime = "nodejs";
 
@@ -28,7 +28,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   try {
-    const info = await fetchVideoInfo(parsed.toString());
+    const info = await fetchInfo(parsed.toString());
     return NextResponse.json(info);
   } catch (err) {
     if (err instanceof AppError) {

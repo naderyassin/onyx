@@ -8,11 +8,25 @@ import type { ApiError, AudioFormat, DownloadMode, JobState, JobStatus } from "@
 
 const TERMINAL: ReadonlySet<JobStatus> = new Set(["complete", "error", "canceled"]);
 
+/** Placeholder state for the moment before the server has a job to report on. */
+function blankJob(patch: Partial<JobState> & Pick<JobState, "status">): JobState {
+  return {
+    id: "",
+    progress: 0,
+    itemProgress: 0,
+    downloadedBytes: 0,
+    sessionBytes: 0,
+    ...patch,
+  };
+}
+
 export interface StartDownloadArgs {
   url: string;
   mode: DownloadMode;
   height?: number;
   audioFormat?: AudioFormat;
+  /** Whole-playlist download — one job, delivered as a single zip. */
+  playlist?: boolean;
   meta: {
     title: string;
     uploader?: string;
@@ -63,7 +77,7 @@ export function useDownload() {
             uploader: args.meta.uploader,
             thumbnailUrl: args.meta.thumbnailUrl,
             extractor: args.meta.extractor,
-            mode: args.mode,
+            mode: args.playlist ? "playlist" : args.mode,
             qualityLabel: args.meta.qualityLabel,
             fileName: state.fileName,
             fileSize: state.fileSize,
@@ -120,7 +134,7 @@ export function useDownload() {
       closeStream();
       savedRef.current = false;
       jobIdRef.current = null;
-      setJob({ id: "", status: "starting", progress: 0, downloadedBytes: 0 });
+      setJob(blankJob({ status: "starting" }));
 
       let jobId: string;
       try {
@@ -132,20 +146,21 @@ export function useDownload() {
             mode: args.mode,
             height: args.height,
             audioFormat: args.audioFormat,
+            playlist: args.playlist,
           }),
         });
         const json: unknown = await res.json();
         if (!res.ok) {
           const message = (json as ApiError).error ?? "Could not start the download.";
           toast.error(message);
-          setJob({ id: "", status: "error", progress: 0, downloadedBytes: 0, error: message });
+          setJob(blankJob({ status: "error", error: message }));
           return;
         }
         jobId = (json as { jobId: string }).jobId;
       } catch {
         const message = "Couldn't reach the server. Is the app still running?";
         toast.error(message);
-        setJob({ id: "", status: "error", progress: 0, downloadedBytes: 0, error: message });
+        setJob(blankJob({ status: "error", error: message }));
         return;
       }
 
@@ -177,6 +192,31 @@ export function useDownload() {
     } catch {}
   }, []);
 
+  /**
+   * Pause/resume are server-side process control; the open SSE stream reports
+   * the new status back, so there's nothing to set locally beyond an error.
+   */
+  const setPaused = useCallback(async (paused: boolean) => {
+    const id = jobIdRef.current;
+    if (!id) return;
+    try {
+      const res = await fetch(`/api/download/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: paused ? "pause" : "resume" }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as ApiError | null;
+        toast.error(json?.error ?? `Could not ${paused ? "pause" : "resume"} the download.`);
+      }
+    } catch {
+      toast.error("Couldn't reach the server. Is the app still running?");
+    }
+  }, []);
+
+  const pause = useCallback(() => setPaused(true), [setPaused]);
+  const resume = useCallback(() => setPaused(false), [setPaused]);
+
   const saveAgain = useCallback(() => {
     if (jobIdRef.current) triggerBrowserSave(jobIdRef.current);
   }, []);
@@ -188,5 +228,5 @@ export function useDownload() {
     setJob(null);
   }, [closeStream]);
 
-  return { job, active, start, cancel, saveAgain, reset };
+  return { job, active, start, cancel, pause, resume, saveAgain, reset };
 }

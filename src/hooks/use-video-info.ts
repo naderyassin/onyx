@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import type { ApiError, VideoInfo } from "@/lib/types";
+import type { ApiError, InfoResult } from "@/lib/types";
 
 export type InfoState = "idle" | "loading" | "success" | "error";
 
 export function useVideoInfo() {
   const [state, setState] = useState<InfoState>("idle");
-  const [data, setData] = useState<VideoInfo | null>(null);
+  const [data, setData] = useState<InfoResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -33,7 +33,7 @@ export function useVideoInfo() {
         setState("error");
         return;
       }
-      setData(json as VideoInfo);
+      setData(json as InfoResult);
       setState("success");
     } catch (err) {
       if ((err as Error).name === "AbortError") return;

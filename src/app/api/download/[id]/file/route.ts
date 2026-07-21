@@ -15,6 +15,7 @@ const MIME: Record<string, string> = {
   opus: "audio/opus",
   ogg: "audio/ogg",
   wav: "audio/wav",
+  zip: "application/zip",
 };
 
 function contentDisposition(fileName: string): string {
