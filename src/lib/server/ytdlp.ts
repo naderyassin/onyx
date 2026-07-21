@@ -481,7 +481,14 @@ function buildArgs(job: InternalJob, opts: DownloadOptions, ffmpegPath?: string)
       path.join(contentDir, "%(playlist_index)03d - %(title).100B.%(ext)s"),
     );
   } else {
-    args.push("--no-playlist", "-o", path.join(contentDir, "%(title).140B [%(id)s].%(ext)s"));
+    // Budget the title tighter than the final filename needs. Before ffmpeg
+    // merges separate video+audio downloads, each stream is written under its
+    // own intermediate name — "<title> [id].f<format_id><v|a>.<ext>.part" — and
+    // that suffix (~45 chars) is what has to fit under Windows' 260-char path
+    // limit, not just the merged result. A 140-byte title left no headroom and
+    // failed every write on a long-titled video (e.g. Facebook posts, whose
+    // "title" is the post's full caption).
+    args.push("--no-playlist", "-o", path.join(contentDir, "%(title).90B [%(id)s].%(ext)s"));
   }
 
   // Only pin the location when it's a real path — passing the bare "ffmpeg"
