@@ -515,6 +515,22 @@ function spawnYtdlp(job: InternalJob): void {
 const PROGRESS_TPL =
   "download:[dl]|%(progress.status)s|%(progress.downloaded_bytes|0)j|%(progress.total_bytes|0)j|%(progress.total_bytes_estimate|0)j|%(progress.speed|0)j|%(progress.eta|0)j|%(progress.fragment_index|0)j|%(progress.fragment_count|0)j|%(info.playlist_index|0)j|%(info.playlist_count|0)j|%(info.title)j";
 
+/**
+ * Printed once per item, just before its first byte. yt-dlp only ever reports
+ * progress for the stream in flight, so without this the size of the item as a
+ * whole is unknowable until it is over. `requested_formats` is the list of
+ * streams a merged download will fetch (empty when there is only one, in which
+ * case the item's own `filesize` is the answer).
+ */
+const STREAMS_TPL =
+  "before_dl:[streams]|%(requested_formats.:.filesize,filesize_approx|0)j|%(filesize,filesize_approx|0)j";
+
+const STREAMS_PREFIX = "[streams]|";
+
+/** yt-dlp's own announcement of the formats it settled on: the item boundary,
+ *  and a count of the streams to expect ("396+251" → two). */
+const FORMATS_RE = /^\[info\] .+: Downloading \d+ format\(s\): (\S+)/;
+
 function buildArgs(job: InternalJob, opts: DownloadOptions, ffmpegPath?: string): string[] {
   const contentDir = job.contentDir;
   const args = [
@@ -523,6 +539,11 @@ function buildArgs(job: InternalJob, opts: DownloadOptions, ffmpegPath?: string)
     "--progress",
     "--progress-template",
     PROGRESS_TPL,
+    "--print",
+    STREAMS_TPL,
+    // --print implies --quiet, which would swallow the [info]/[Merger]/ERROR
+    // lines the parser below reads. --progress keeps the bar alive regardless.
+    "--no-quiet",
     "--windows-filenames",
     "--no-mtime",
     "--retries",
@@ -621,10 +642,73 @@ function parseTitle(json: string): string | undefined {
 function trackBytes(job: InternalJob, downloaded: number): void {
   if (downloaded < job.streamBytes) {
     job.priorBytes += job.streamBytes;
+    job.itemPriorBytes += job.streamBytes;
+    job.streamsDone += 1;
     job.streamBytes = 0;
   }
   if (downloaded !== job.streamBytes) job.lastByteAt = Date.now();
   job.streamBytes = downloaded;
+}
+
+/** Sizes from `STREAMS_TPL`; a zero or null anywhere makes the sum untrustworthy. */
+function parseSizes(json: string): number[] {
+  try {
+    const value = JSON.parse(json) as unknown;
+    if (!Array.isArray(value)) return [];
+    return value.map((n) => (typeof n === "number" && Number.isFinite(n) ? n : 0));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * A new item is about to start — also fired by a resume, which replays the item
+ * from its first stream. Only the accumulators reset; the numbers already on
+ * screen stay until the next progress line replaces them, a few milliseconds
+ * later, so the bar never blinks back to zero.
+ */
+function resetItem(job: InternalJob, streamCount: number): void {
+  job.streamCount = streamCount;
+  job.streamsDone = 0;
+  job.itemPriorBytes = 0;
+  job.itemTotalBytes = undefined;
+  job.streamBytes = 0;
+}
+
+/**
+ * Converts the current stream's numbers into progress for the whole item.
+ *
+ * yt-dlp downloads a video and its audio as two separate streams and restarts
+ * `downloaded_bytes` at zero for each, so a bar driven straight off
+ * `downloaded / total` fills once per stream — the download visibly completing
+ * twice. Measuring against the summed size of every stream (from `STREAMS_TPL`)
+ * fills it exactly once, and makes the byte readout the size of the file the
+ * user is actually waiting for rather than of one of its halves.
+ */
+function applyItemProgress(job: InternalJob, downloaded: number, streamTotal: number): void {
+  // With one stream there is nothing to sum: the stream is the item. Covers
+  // audio-only and muxed downloads from sites that report no size up front.
+  if (!job.itemTotalBytes && job.streamCount === 1 && streamTotal > 0) {
+    job.itemTotalBytes = streamTotal;
+  }
+
+  job.downloadedBytes = job.itemPriorBytes + downloaded;
+  job.totalBytes = job.itemTotalBytes;
+
+  if (job.itemTotalBytes) {
+    job.itemProgress = Math.min(100, (job.downloadedBytes / job.itemTotalBytes) * 100);
+    return;
+  }
+  // No byte totals at all (HLS/DASH): fall back to how far the current stream
+  // has come, spread across the streams the item is made of, so the bar still
+  // crosses the panel only once.
+  const fraction =
+    streamTotal > 0
+      ? downloaded / streamTotal
+      : job.fragmentCount
+        ? (job.fragmentIndex ?? 0) / job.fragmentCount
+        : 0;
+  job.itemProgress = Math.min(100, ((job.streamsDone + fraction) / job.streamCount) * 100);
 }
 
 function parseLine(job: InternalJob, line: string): void {
@@ -641,20 +725,17 @@ function parseLine(job: InternalJob, line: string): void {
     if (status === "downloading" && !job.canceled && !job.pausing) {
       job.status = "downloading";
       trackBytes(job, downloaded);
-      job.downloadedBytes = downloaded;
-      job.totalBytes = totalBytes || undefined;
       job.speedBps = num(speed) || undefined;
-      job.etaSec = num(eta) || undefined;
       job.fragmentIndex = num(fragIdx) || undefined;
       job.fragmentCount = num(fragCount) || undefined;
-
-      // Byte totals are unknown for HLS/DASH streams — fall back to fragments
-      // so the bar still moves instead of sitting at zero.
-      if (totalBytes > 0) {
-        job.itemProgress = Math.min(100, (downloaded / totalBytes) * 100);
-      } else if (job.fragmentCount) {
-        job.itemProgress = Math.min(100, ((job.fragmentIndex ?? 0) / job.fragmentCount) * 100);
-      }
+      applyItemProgress(job, downloaded, totalBytes);
+      // yt-dlp's ETA only covers the stream in flight and would promise the file
+      // seconds before its audio track has even started. Project across what is
+      // left of the whole item instead, whenever its size is known.
+      job.etaSec =
+        job.totalBytes && job.speedBps
+          ? Math.round(Math.max(0, job.totalBytes - job.downloadedBytes) / job.speedBps)
+          : num(eta) || undefined;
 
       if (job.isPlaylist && job.playlist) {
         if (count > 0) job.playlist.count = count;
@@ -679,13 +760,42 @@ function parseLine(job: InternalJob, line: string): void {
         job.progress = job.itemProgress;
       }
     } else if (status === "finished") {
-      // Bank the stream that just ended so the session total stays accurate.
-      job.priorBytes += job.streamBytes;
+      // Bank the stream that just ended. A resume finds earlier streams already
+      // complete and reports them with no downloaded bytes at all, so the item
+      // total takes the largest figure available — while the session total
+      // counts only what actually crossed the wire this time.
+      const transferred = Math.max(job.streamBytes, downloaded);
+      job.priorBytes += transferred;
+      job.itemPriorBytes += Math.max(transferred, totalBytes);
       job.streamBytes = 0;
+      job.streamsDone += 1;
       job.lastByteAt = Date.now();
-      job.itemProgress = 100;
-      if (!job.isPlaylist) job.progress = 100;
+      job.fragmentIndex = undefined;
+      job.fragmentCount = undefined;
+      applyItemProgress(job, 0, 0);
+      // Every stream landed, so the item is here whatever the arithmetic says —
+      // sizes reported as approximate rarely add up to the byte.
+      if (job.streamsDone >= job.streamCount) job.itemProgress = 100;
+      if (!job.isPlaylist) job.progress = job.itemProgress;
     }
+    return;
+  }
+  const formats = line.match(FORMATS_RE)?.[1];
+  if (formats) {
+    resetItem(job, formats.split("+").length);
+    return;
+  }
+  if (line.startsWith(STREAMS_PREFIX)) {
+    const [list, single] = line.slice(STREAMS_PREFIX.length).split("|");
+    const sizes = parseSizes(list);
+    // Both lines mark the same boundary; resetting on each means neither is
+    // load-bearing on its own. A single-format item lists no streams, so keep
+    // the count the [info] line already gave.
+    resetItem(job, sizes.length || job.streamCount);
+    const total = sizes.length ? sizes.reduce((a, b) => a + b, 0) : num(single);
+    // One missing size makes the sum an undercount, which would run the bar
+    // past 100% — better to fall back to counting streams than to lie.
+    job.itemTotalBytes = total > 0 && sizes.every((s) => s > 0) ? total : undefined;
     return;
   }
   if (/^\[(Merger|ExtractAudio|VideoConvertor|VideoRemuxer|Fixup\w*|Metadata|EmbedThumbnail)\]/.test(line)) {

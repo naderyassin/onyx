@@ -21,6 +21,16 @@ export interface InternalJob {
   /** Bytes of the stream in flight. Kept apart from `priorBytes` so the running
    *  session total stays correct across the video/audio streams of one item. */
   streamBytes: number;
+  /** Bytes of the current item's already-finished streams. Scoped to one item,
+   *  unlike `priorBytes`, which spans every item of a playlist. */
+  itemPriorBytes: number;
+  /** Size of the current item with all of its streams added up — the bar's real
+   *  denominator, learned from yt-dlp before the first byte arrives. */
+  itemTotalBytes?: number;
+  /** How many streams this item is made of (2 for the usual video + audio pair)
+   *  and how many are done. Drives the bar when byte totals are unavailable. */
+  streamCount: number;
+  streamsDone: number;
   /** When the byte counter last moved — the basis for stall detection. */
   lastByteAt?: number;
   fragmentIndex?: number;
@@ -110,6 +120,9 @@ export function createJob(url: string, mode: DownloadMode, isPlaylist = false): 
     downloadedBytes: 0,
     priorBytes: 0,
     streamBytes: 0,
+    itemPriorBytes: 0,
+    streamCount: 1,
+    streamsDone: 0,
     ...(isPlaylist
       ? { playlist: { completed: 0, skipped: 0, skippedTitles: [] } as PlaylistProgress }
       : {}),

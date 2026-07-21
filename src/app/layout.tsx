@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Instrument_Serif, JetBrains_Mono } from "next/font/google";
+import { Inter, Instrument_Serif, JetBrains_Mono, Press_Start_2P } from "next/font/google";
 import "./globals.css";
 import { Navbar } from "@/components/layout/navbar";
 import { Providers } from "@/components/providers";
@@ -24,6 +24,13 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
+const pressStart2P = Press_Start_2P({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-press-start",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: {
     default: "Onyx — Save the internet, beautifully",
@@ -44,7 +51,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`dark ${inter.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable}`}
+      className={`dark ${inter.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${pressStart2P.variable}`}
     >
       <body className="min-h-svh overflow-x-hidden">
         <Providers>

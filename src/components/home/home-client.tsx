@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
-import { LogoMark } from "@/components/logo";
+import { LogoMark, OnyxPixelTitle, PowerSparkIcon } from "@/components/logo";
 import { BinaryNotice } from "@/components/home/binary-notice";
 import { ModeSelector, MODE_ITEMS, type ModeItem } from "@/components/home/mode-selector";
 import { PlaylistCard } from "@/components/home/playlist-card";
@@ -227,27 +227,35 @@ export function HomeClient() {
         animate="visible"
         className="flex w-full max-w-2xl flex-col items-center"
       >
-        <motion.div custom={0} variants={fadeRise}>
-          <LogoMark className="size-12 rounded-2xl" iconClassName="size-5" />
+        <motion.div custom={0} variants={fadeRise} className="flex flex-col items-center">
+          <motion.div
+            animate={{
+              y: [-6, 6, -6],
+              filter: [
+                "drop-shadow(0 0 24px rgba(255,255,255,0.35))",
+                "drop-shadow(0 0 38px rgba(255,255,255,0.65))",
+                "drop-shadow(0 0 24px rgba(255,255,255,0.35))",
+              ],
+            }}
+            transition={{
+              duration: 3.5,
+              ease: "easeInOut",
+              repeat: Infinity,
+            }}
+            className="size-28 md:size-36 mb-6"
+          >
+            <PowerSparkIcon className="size-full" />
+          </motion.div>
+
+          <h1 className="w-full mb-6 text-center">
+            <OnyxPixelTitle className="mx-auto drop-shadow-[0_0_28px_rgba(255,255,255,0.3)]" />
+          </h1>
+
+          <div className="font-mono text-sm md:text-base text-white/95 border border-white/40 rounded-xl px-5 py-2.5 bg-black/70 shadow-[inset_0_0_15px_rgba(255,255,255,0.06)] flex items-center gap-2.5 mb-2">
+            <span>&gt; Save the internet, beautifully.</span>
+            <span className="inline-block w-2.5 h-4 bg-white animate-pulse" />
+          </div>
         </motion.div>
-
-        <motion.h1
-          custom={1}
-          variants={fadeRise}
-          className="mt-7 text-center text-[clamp(2.2rem,6vw,3.4rem)] font-medium leading-[1.05] tracking-[-0.03em]"
-        >
-          Save the internet,{" "}
-          <span className="font-serif font-normal italic text-white/90">beautifully.</span>
-        </motion.h1>
-
-        <motion.p
-          custom={2}
-          variants={fadeRise}
-          className="mt-4 max-w-md text-center text-sm leading-relaxed text-muted-foreground md:text-[15px]"
-        >
-          Paste a link from YouTube, X, TikTok or {TOTAL_SUPPORTED_LABEL} other sites — Onyx
-          fetches it in the best quality, right on your machine.
-        </motion.p>
 
         <motion.div custom={3} variants={fadeRise} className="mt-10 w-full">
           <UrlBar

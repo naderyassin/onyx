@@ -84,8 +84,9 @@ export interface JobState {
   progress: number;
   /** 0–100 for the single file currently downloading. */
   itemProgress: number;
-  /** Bytes of the current file/stream. */
+  /** Bytes of the current file, summed across the streams it is built from. */
   downloadedBytes: number;
+  /** Size of the current file — every one of its streams together. */
   totalBytes?: number;
   /** Bytes pulled since the job started, across every stream and playlist item. */
   sessionBytes: number;
