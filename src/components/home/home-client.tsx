@@ -343,7 +343,7 @@ export function HomeClient() {
       </motion.div>
 
       <p className="pointer-events-none fixed inset-x-0 bottom-5 hidden text-center text-xs text-white/25 sm:block">
-        Runs locally · powered by yt-dlp + FFmpeg ·{" "}
+        {TOTAL_SUPPORTED_LABEL} supported sites ·{" "}
         <kbd className="rounded border border-white/15 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-white/45">
           Ctrl&thinsp;V
         </kbd>{" "}
