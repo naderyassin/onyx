@@ -221,7 +221,7 @@ export function HomeClient() {
   };
 
   return (
-    <div className="flex min-h-svh flex-col items-center justify-center px-5 pb-28 pt-32">
+    <div className="flex min-h-svh flex-col items-center justify-center px-5 pt-[clamp(4.5rem,14dvh,8rem)] pb-[clamp(1.5rem,8dvh,7rem)]">
       <motion.div
         initial="hidden"
         animate="visible"
@@ -242,13 +242,13 @@ export function HomeClient() {
               ease: "easeInOut",
               repeat: Infinity,
             }}
-            className="size-28 md:size-36 mb-6"
+            className="size-[clamp(3.5rem,11dvh,9rem)] mb-[clamp(0.5rem,3dvh,1.5rem)]"
           >
             <PowerSparkIcon className="size-full" />
           </motion.div>
 
-          <h1 className="w-full mb-6 text-center">
-            <OnyxPixelTitle className="mx-auto drop-shadow-[0_0_28px_rgba(255,255,255,0.3)]" />
+          <h1 className="w-full mb-[clamp(0.5rem,3dvh,1.5rem)] text-center">
+            <OnyxPixelTitle className="mx-auto max-w-[clamp(200px,38dvh,480px)] drop-shadow-[0_0_28px_rgba(255,255,255,0.3)]" />
           </h1>
 
           <div className="font-mono text-sm md:text-base text-white/95 border border-white/40 rounded-xl px-5 py-2.5 bg-black/70 shadow-[inset_0_0_15px_rgba(255,255,255,0.06)] flex items-center gap-2.5 mb-2">
@@ -257,7 +257,7 @@ export function HomeClient() {
           </div>
         </motion.div>
 
-        <motion.div custom={3} variants={fadeRise} className="mt-10 w-full">
+        <motion.div custom={3} variants={fadeRise} className="mt-[clamp(1rem,5dvh,2.5rem)] w-full">
           <UrlBar
             value={url}
             onChange={setUrl}
@@ -272,7 +272,7 @@ export function HomeClient() {
         </motion.div>
 
         {data?.kind !== "playlist" && (
-          <motion.div custom={4} variants={fadeRise} className="mt-5">
+          <motion.div custom={4} variants={fadeRise} className="mt-[clamp(0.5rem,3dvh,1.25rem)]">
             <ModeSelector
               value={mode}
               onChange={setMode}
