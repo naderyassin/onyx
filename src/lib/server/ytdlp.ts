@@ -11,6 +11,7 @@ import type {
 } from "@/lib/types";
 import { resolveBinaries } from "./binaries";
 import { AppError } from "./errors";
+import { parsePublicHttpUrl } from "./net";
 import { isTerminal, type InternalJob } from "./jobs";
 import { zipDirectory } from "./zip";
 
@@ -132,6 +133,66 @@ async function impersonationArgs(bin: string, url: string): Promise<string[]> {
   return (await supportsImpersonation(bin)) ? ["--impersonate", "chrome"] : [];
 }
 
+/**
+ * Pinterest's share button hands out pin.it links, and yt-dlp has no extractor
+ * for that host. Its generic fallback does follow the redirect, but the chain
+ * ends badly: pin.it hops to an invite-flavoured landing page
+ * (/pin/<id>/sent/?invite_code=…) that Pinterest bounces anonymous clients off
+ * to /?show_error=true, which matches no extractor at all — so a perfectly good
+ * link arrives as "Unsupported URL". Walking the redirects ourselves and
+ * stopping at the first /pin/<id> lands on the URL yt-dlp already handles.
+ *
+ * Everything that isn't a pin.it link returns immediately without a request,
+ * and any failure along the way yields the original URL, so yt-dlp still gets
+ * to produce its own error for a genuinely dead link.
+ */
+const PIN_SHORT_HOST = /^(?:[\w-]+\.)?pin\.it$/i;
+const PINTEREST_HOST = /(^|\.)pinterest\.[a-z][a-z.]*$/i;
+const PIN_PATH = /^\/pin\/(?:[\w-]+--)?(\d+)/;
+const SHORT_LINK_HOPS = 5;
+const SHORT_LINK_TIMEOUT_MS = 10_000;
+
+async function resolveShortLink(raw: string): Promise<string> {
+  let current: URL;
+  try {
+    current = new URL(raw);
+  } catch {
+    return raw;
+  }
+  if (!PIN_SHORT_HOST.test(current.hostname)) return raw;
+
+  for (let hop = 0; hop < SHORT_LINK_HOPS; hop++) {
+    let location: string | null;
+    try {
+      const res = await fetch(current.toString(), {
+        redirect: "manual",
+        signal: AbortSignal.timeout(SHORT_LINK_TIMEOUT_MS),
+      });
+      location = res.headers.get("location");
+    } catch {
+      return raw;
+    }
+    if (!location) return raw;
+
+    let next: URL;
+    try {
+      next = new URL(location, current);
+    } catch {
+      return raw;
+    }
+    // Each hop is attacker-influenced, so re-apply the same host hygiene the
+    // API routes use before following it.
+    if (!parsePublicHttpUrl(next.toString())) return raw;
+
+    if (PINTEREST_HOST.test(next.hostname)) {
+      const id = next.pathname.match(PIN_PATH)?.[1];
+      if (id) return `https://www.pinterest.com/pin/${id}/`;
+    }
+    current = next;
+  }
+  return raw;
+}
+
 function runInfoOnce(bin: string, args: string[]): Promise<RawInfo> {
   return new Promise<string>((resolve, reject) => {
     execFile(
@@ -205,7 +266,9 @@ export async function fetchVideoInfo(url: string): Promise<VideoInfo> {
  * a lone video, a video that belongs to a playlist (with the list attached),
  * or a pure playlist page. Uses a cheap `--flat-playlist` probe first.
  */
-export async function fetchInfo(url: string): Promise<InfoResult> {
+export async function fetchInfo(rawUrl: string): Promise<InfoResult> {
+  // Resolved once here; every path below (including fetchVideoInfo) inherits it.
+  const url = await resolveShortLink(rawUrl);
   const flat = await runInfoJson(url, ["-J", "--flat-playlist", "--no-warnings", ...jsRuntimeArgs()]);
 
   const entries = (flat.entries ?? []).filter((e): e is RawInfo => !!e);
@@ -377,7 +440,14 @@ function normalize(raw: RawInfo, sourceUrl: string): VideoInfo {
   const duration =
     raw.duration != null && Number.isFinite(raw.duration) ? Math.round(raw.duration) : undefined;
   const formats = raw.formats ?? [];
-  const hasVideo = (f: RawFormat) => !!f.vcodec && f.vcodec !== "none";
+  // yt-dlp writes vcodec "none" to mean *no video*; an absent or null vcodec
+  // means *unknown*, which its own format selectors still treat as video.
+  // Requiring the field to be present dropped every format from extractors that
+  // don't report codecs (Rumble, Tumblr, Twitch clips, Loom, Internet Archive),
+  // leaving those sites with an empty quality list. Only "none" disqualifies.
+  const hasVideo = (f: RawFormat) => f.vcodec !== "none";
+  // Left stricter on purpose: this one also decides what counts as an
+  // audio-only stream, and the audio sites all label vcodec "none" already.
   const hasAudio = (f: RawFormat) => !!f.acodec && f.acodec !== "none";
 
   const videoFormats = formats.filter((f) => hasVideo(f) && (f.height ?? 0) > 0);
@@ -467,6 +537,9 @@ export async function startDownload(job: InternalJob, opts: DownloadOptions): Pr
       503,
     );
   }
+
+  // Settled before the argv is built so a pause/resume respawns the same URL.
+  job.url = await resolveShortLink(job.url);
 
   const args = buildArgs(job, opts, ffmpegPath);
   args.push(...(await impersonationArgs(bins.ytdlp.path, job.url)), job.url);
