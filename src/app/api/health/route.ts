@@ -9,9 +9,13 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request): Promise<NextResponse> {
   const fresh = new URL(req.url).searchParams.get("fresh") === "1";
   const status = await resolveBinaries(fresh);
-  const cookiesPath = process.env.COOKIES_PATH ?? path.join(process.cwd(), "cookies.txt");
+  const cookiesFound = [
+    process.env.COOKIES_PATH,
+    path.join(process.cwd(), "cookies.txt"),
+    path.join(process.cwd(), "cookies.dat"),
+  ].some((p) => p && fs.existsSync(p));
   return NextResponse.json(
-    { ...status, cookies: fs.existsSync(cookiesPath) },
+    { ...status, cookies: cookiesFound },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
