@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
+import { Download } from "lucide-react";
 import { LogoMark, OnyxPixelTitle, PowerSparkIcon } from "@/components/logo";
 import { BinaryNotice } from "@/components/home/binary-notice";
 import { ModeSelector, MODE_ITEMS, type ModeItem } from "@/components/home/mode-selector";
@@ -36,6 +37,7 @@ export function HomeClient() {
   // Whole-playlist controls (used by the Playlist mode / a pure playlist card).
   const [playlistItemMode, setPlaylistItemMode] = useState<DownloadMode>("auto");
   const [playlistHeight, setPlaylistHeight] = useState<number | undefined>(undefined);
+  const [isDesktop, setIsDesktop] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const data = info.data;
@@ -80,6 +82,11 @@ export function HomeClient() {
         : "auto",
     );
     setPlaylistHeight(settings.videoQuality === "best" ? undefined : Number(settings.videoQuality));
+    
+    // Check if we're running inside the Electron app
+    if (typeof navigator !== "undefined" && navigator.userAgent.toLowerCase().includes("electron")) {
+      setIsDesktop(true);
+    }
   }, []);
 
   // "Playlist" mode only exists while a playlist is attached — fall back if the
@@ -222,6 +229,16 @@ export function HomeClient() {
 
   return (
     <div className="flex min-h-svh flex-col items-center justify-center px-5 pt-[clamp(4.5rem,14dvh,8rem)] pb-[clamp(1.5rem,8dvh,7rem)]">
+      {!isDesktop && (
+        <a
+          href="/downloads/Onyx-Setup.exe"
+          download
+          className="fixed top-5 right-5 md:top-8 md:right-8 z-50 flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-medium text-white shadow-lg backdrop-blur-md transition-all hover:bg-white/20 hover:scale-105 active:scale-95 border border-white/20"
+        >
+          <Download className="size-4" />
+          <span className="hidden sm:inline">Download for Windows</span>
+        </a>
+      )}
       <motion.div
         initial="hidden"
         animate="visible"
