@@ -20,6 +20,20 @@ function candidatesFor(name: BinaryName): string[] {
   const envOverride = name === "yt-dlp" ? process.env.YTDLP_PATH : process.env.FFMPEG_PATH;
   const list: string[] = [];
   if (envOverride) list.push(envOverride);
+  // Bundled binaries for hosts with no shell access (e.g. shared hosting):
+  // a bin/ dir shipped with the app, made executable here since chmod may
+  // not have survived the upload.
+  const bundled = path.join(
+    process.cwd(),
+    "bin",
+    process.platform === "win32" ? `${name}.exe` : name,
+  );
+  if (fs.existsSync(bundled)) {
+    try {
+      fs.chmodSync(bundled, 0o755);
+    } catch {}
+    list.push(bundled);
+  }
   list.push(name);
   if (process.platform === "win32") {
     list.push(...wingetCandidates(name));
