@@ -61,7 +61,13 @@ interface RawInfo {
  * running this server is always available — hand it over.
  */
 function jsRuntimeArgs(): string[] {
-  return ["--js-runtimes", `node:${process.execPath}`];
+  const args = ["--js-runtimes", `node:${process.execPath}`];
+  // Opt-in cookies for sites that block anonymous/datacenter requests
+  // (YouTube on hosted servers). Set COOKIES_PATH to a Netscape-format
+  // cookies.txt uploaded next to the app.
+  const cookies = process.env.COOKIES_PATH;
+  if (cookies && fs.existsSync(cookies)) args.push("--cookies", cookies);
+  return args;
 }
 
 /**
