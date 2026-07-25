@@ -65,8 +65,8 @@ function jsRuntimeArgs(): string[] {
   // Opt-in cookies for sites that block anonymous/datacenter requests
   // (YouTube on hosted servers). Set COOKIES_PATH to a Netscape-format
   // cookies.txt uploaded next to the app.
-  const cookies = process.env.COOKIES_PATH;
-  if (cookies && fs.existsSync(cookies)) args.push("--cookies", cookies);
+  const cookies = process.env.COOKIES_PATH ?? path.join(process.cwd(), "cookies.txt");
+  if (fs.existsSync(cookies)) args.push("--cookies", cookies);
   return args;
 }
 

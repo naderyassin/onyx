@@ -42,3 +42,6 @@ next-env.d.ts
 
 # claude code local session state
 .claude/scheduled_tasks.lock
+
+# YouTube session cookies — never commit
+cookies.txt
