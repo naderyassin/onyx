@@ -5,6 +5,17 @@ import type { BinaryStatus, HealthStatus } from "@/lib/types";
 
 type BinaryName = "yt-dlp" | "ffmpeg";
 
+// The standalone yt-dlp binary self-extracts into TMPDIR on every run; shared
+// hosts often mount /tmp no-exec, which kills it silently. Point TMPDIR at an
+// app-local dir (inherited by every child process we spawn).
+if (process.platform !== "win32") {
+  const tmp = path.join(process.cwd(), ".onyx-tmp");
+  try {
+    fs.mkdirSync(tmp, { recursive: true });
+    process.env.TMPDIR = tmp;
+  } catch {}
+}
+
 const CACHE_TTL_MS = 60_000;
 
 const g = globalThis as unknown as {
@@ -75,7 +86,9 @@ function wingetCandidates(name: BinaryName): string[] {
 
 function probe(cmd: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: 8_000, windowsHide: true }, (err, stdout) => {
+    // 30s: the standalone yt-dlp self-extracts on first run, which can be
+    // slow on shared-host CPUs.
+    execFile(cmd, args, { timeout: 30_000, windowsHide: true }, (err, stdout) => {
       if (err) {
         resolve(null);
         return;
