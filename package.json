@@ -3,10 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "next dev --turbopack",
+    "build": "next build && node scripts/copy_standalone.js",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "next lint",
+    "electron:dev": "cross-env NODE_ENV=development electron .",
+    "electron:build": "npm run build && electron-builder --win"
   },
   "dependencies": {
     "archiver": "^8.0.0",
@@ -30,10 +32,17 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^10.1.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "get-port": "^7.2.0",
+    "png-to-ico": "^3.0.2",
+    "rcedit": "^5.0.2",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wait-on": "^9.1.0"
   },
   "allowScripts": {
     "sharp@0.34.5": true,
@@ -43,5 +52,46 @@
     "sharp": "^0.35.3",
     "postcss": "^8.5.21",
     "@hono/node-server": "^2.0.11"
+  },
+  "main": "main.js",
+  "build": {
+    "appId": "com.onyx.app",
+    "productName": "Onyx",
+    "asar": false,
+    "npmRebuild": false,
+    "compression": "store",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "package.json",
+      "public/**/*",
+      ".next/standalone/**/*",
+      ".next/static/**/*",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/favicon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "public/favicon.ico",
+      "uninstallerIcon": "public/favicon.ico",
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp"
+    }
   }
 }

@@ -796,6 +796,18 @@ function applyItemProgress(job: InternalJob, downloaded: number, streamTotal: nu
   job.itemProgress = Math.min(100, ((job.streamsDone + fraction) / job.streamCount) * 100);
 }
 
+/** Drops yt-dlp's "[youtube] dQw4w9WgXcQ:" prefix — the id means nothing to the
+ *  reader, and the reason is what the list is for. */
+function skipReason(message: string): string {
+  return message.replace(/^\[[^\]]+\]\s+\S+?:\s+/, "").trim() || message;
+}
+
+/** One failure yields many near-identical lines that differ only in a fragment
+ *  or attempt number, so numbers are flattened before the duplicate check. */
+function dedupeKey(reason: string): string {
+  return reason.toLowerCase().replace(/\d+/g, "#");
+}
+
 function parseLine(job: InternalJob, line: string): void {
   if (!line) return;
   if (line.startsWith("[dl]|")) {
@@ -904,16 +916,19 @@ function parseLine(job: InternalJob, line: string): void {
     if (job.isPlaylist && job.playlist) {
       // The skipped *count* is derived from playlist-index gaps above — yt-dlp
       // prints many ERROR lines per failure (retries, fragments, summary), so
-      // counting them here would wildly overcount. Only log the meaningful
-      // "this video is unavailable" reasons, de-duplicated, for the record.
-      if (
-        /unavailable|private|removed|deleted|members-only|sign in|not available|blocked|age.?restrict|copyright/i.test(
-          message,
-        ) &&
-        job.playlist.skippedTitles.length < 25 &&
-        !job.playlist.skippedTitles.includes(message)
-      ) {
-        job.playlist.skippedTitles.push(message);
+      // counting them here would wildly overcount. These are the reasons behind
+      // that count, kept for the UI.
+      //
+      // Every error earns a line, not just the "video unavailable" family: a
+      // throttled or blocked run skips items with 403s and fragment failures,
+      // and those are exactly the ones worth showing — a bare count with no
+      // reason reads as if the videos were private when the site was really
+      // refusing the machine.
+      const reason = skipReason(message);
+      const key = dedupeKey(reason);
+      if (job.playlist.skippedTitles.length < 25 && !job.skipKeys?.has(key)) {
+        (job.skipKeys ??= new Set()).add(key);
+        job.playlist.skippedTitles.push(reason);
       }
       // Keep the last raw error so a zero-file run can explain itself.
       job.error = message;

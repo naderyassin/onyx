@@ -33,6 +33,8 @@ export interface InternalJob {
   streamsDone: number;
   /** When the byte counter last moved — the basis for stall detection. */
   lastByteAt?: number;
+  /** Normalized skip reasons already recorded, so repeats aren't listed twice. */
+  skipKeys?: Set<string>;
   fragmentIndex?: number;
   fragmentCount?: number;
   speedBps?: number;

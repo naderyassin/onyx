@@ -69,11 +69,11 @@ export interface PlaylistProgress {
   index?: number;
   /** Title of the video currently downloading. */
   currentTitle?: string;
-  /** Videos fully downloaded so far. */
+  /** Videos started so far while running; the true on-disk count once finished. */
   completed: number;
-  /** Videos skipped because they were unavailable/private. */
+  /** Videos yt-dlp moved past — unavailable, private, or failed after retries. */
   skipped: number;
-  /** Titles (or messages) of skipped videos, for the log. */
+  /** De-duplicated reasons behind `skipped`, newest last, capped at 25. */
   skippedTitles: string[];
 }
 

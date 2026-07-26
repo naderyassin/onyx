@@ -173,6 +173,52 @@ function FormatPicker({
   );
 }
 
+/**
+ * The reasons behind the skipped count, hidden until asked for. The number only
+ * looks wrong when something is off, and then the reasons are the whole answer:
+ * a run the site was blocking is indistinguishable from a list full of private
+ * videos until you can read why each item was passed over.
+ */
+function SkipReasons({ reasons }: { reasons: string[] }) {
+  return (
+    <ul className="mt-2 space-y-1 font-mono text-[11px] leading-relaxed text-white/45">
+      {reasons.map((reason, i) => (
+        <li key={i} className="flex gap-1.5">
+          <span aria-hidden className="shrink-0 text-amber-300/50">
+            ·
+          </span>
+          <span className="min-w-0 break-words">{reason}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The "N skipped" stat, clickable when there are reasons to unfold. */
+function SkippedStat({
+  count,
+  reasons,
+  expanded,
+  onToggle,
+}: {
+  count: number;
+  reasons: string[];
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  if (!reasons.length) return <span className="text-amber-300/80">{count} skipped</span>;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className="text-amber-300/80 underline decoration-dotted underline-offset-2 transition-colors hover:text-amber-300"
+    >
+      {count} skipped
+    </button>
+  );
+}
+
 function ProgressPanel({
   job,
   onPause,
@@ -184,7 +230,9 @@ function ProgressPanel({
   onResume: () => void;
   onCancel: () => void;
 }) {
+  const [showSkips, setShowSkips] = useState(false);
   const pl = job.playlist;
+  const reasons = pl?.skippedTitles ?? [];
   const zipping = job.status === "processing";
   const starting = job.status === "starting";
   const paused = job.status === "paused";
@@ -240,12 +288,20 @@ function ProgressPanel({
             <>
               <Value>{done}</Value> downloaded
             </>,
-            pl?.skipped ? <span className="text-amber-300/80">{pl.skipped} skipped</span> : null,
+            pl?.skipped ? (
+              <SkippedStat
+                count={pl.skipped}
+                reasons={reasons}
+                expanded={showSkips}
+                onToggle={() => setShowSkips((open) => !open)}
+              />
+            ) : null,
             count != null ? `${Math.max(0, count - done - (pl?.skipped ?? 0))} remaining` : null,
             job.sessionBytes > 0 ? `${formatBytes(job.sessionBytes)} fetched` : null,
             elapsedItem(job),
           ]}
         />
+        {showSkips && <SkipReasons reasons={reasons} />}
       </div>
 
       {stalled && <StallNotice seconds={job.stalledSec ?? 0} />}
@@ -263,40 +319,58 @@ function DonePanel({
   onSaveAgain: () => void;
   onReset: () => void;
 }) {
+  const [showSkips, setShowSkips] = useState(false);
   const pl = job.playlist;
+  const reasons = pl?.skippedTitles ?? [];
   return (
-    <div className="flex flex-wrap items-center justify-between gap-4">
-      <div className="flex min-w-0 items-center gap-3">
-        <motion.div
-          initial={{ scale: 0.5, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={SPRING}
-          className="grid size-10 shrink-0 place-items-center rounded-full bg-white text-black"
-        >
-          <Check className="size-5" strokeWidth={2.5} aria-hidden />
-        </motion.div>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{job.fileName ?? "Playlist saved"}</p>
-          <p className="font-mono text-xs text-white/50">
-            {formatBytes(job.fileSize)}
-            {pl ? ` · ${pl.completed} videos` : ""}
-            {pl?.skipped ? ` · ${pl.skipped} skipped` : ""}
-            {" · sent to your downloads"}
-          </p>
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <motion.div
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={SPRING}
+            className="grid size-10 shrink-0 place-items-center rounded-full bg-white text-black"
+          >
+            <Check className="size-5" strokeWidth={2.5} aria-hidden />
+          </motion.div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">{job.fileName ?? "Playlist saved"}</p>
+            <p className="font-mono text-xs text-white/50">
+              {formatBytes(job.fileSize)}
+              {pl ? ` · ${pl.completed} videos` : ""}
+              {pl?.skipped ? (
+                <>
+                  {" · "}
+                  <SkippedStat
+                    count={pl.skipped}
+                    reasons={reasons}
+                    expanded={showSkips}
+                    onToggle={() => setShowSkips((open) => !open)}
+                  />
+                </>
+              ) : null}
+              {" · sent to your downloads"}
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <Button
+            variant="outline"
+            onClick={onSaveAgain}
+            className="h-10 rounded-xl border-white/15 bg-transparent px-4 hover:bg-white/[0.06]"
+          >
+            Save again
+          </Button>
+          <Button
+            onClick={onReset}
+            className="h-10 rounded-xl bg-white px-4 text-black hover:bg-white/90"
+          >
+            Download another
+          </Button>
         </div>
       </div>
-      <div className="flex shrink-0 gap-2">
-        <Button
-          variant="outline"
-          onClick={onSaveAgain}
-          className="h-10 rounded-xl border-white/15 bg-transparent px-4 hover:bg-white/[0.06]"
-        >
-          Save again
-        </Button>
-        <Button onClick={onReset} className="h-10 rounded-xl bg-white px-4 text-black hover:bg-white/90">
-          Download another
-        </Button>
-      </div>
+      {showSkips && <SkipReasons reasons={reasons} />}
     </div>
   );
 }

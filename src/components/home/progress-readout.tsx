@@ -8,8 +8,12 @@ import { formatBytes, formatDuration, formatEta, formatSpeed } from "@/lib/forma
 import type { JobState } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-/** Nothing has arrived for this long → say so, rather than leaving a frozen bar. */
-const STALL_AFTER_SEC = 6;
+/**
+ * Nothing has arrived for this long → say so, rather than leaving a frozen bar.
+ * Sits past yt-dlp's 20s socket timeout on purpose: below that, a silent gap is
+ * just a throttled chunk, and yt-dlp hasn't even decided anything is wrong yet.
+ */
+const STALL_AFTER_SEC = 25;
 
 export function ProgressBar({
   value,
@@ -148,8 +152,8 @@ export function StallNotice({ seconds }: { seconds: number }) {
     >
       <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
       <span>
-        Nothing received for {formatEta(seconds)}. yt-dlp is retrying, or the site is throttling —
-        cancel if it doesn&apos;t recover.
+        Nothing received for {formatEta(seconds)}. yt-dlp is retrying — cancel if it doesn&apos;t
+        recover.
       </span>
     </p>
   );

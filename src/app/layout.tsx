@@ -33,11 +33,21 @@ const pressStart2P = Press_Start_2P({
 
 export const metadata: Metadata = {
   title: {
-    default: "Onyx — Save the internet, beautifully",
+    default: "Onyx",
     template: "%s · Onyx",
   },
   description:
     "Paste a link, preview the media, and save it in the quality you want. Powered by yt-dlp and FFmpeg, running entirely on your machine.",
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    shortcut: "/favicon.ico",
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export const viewport: Viewport = {
