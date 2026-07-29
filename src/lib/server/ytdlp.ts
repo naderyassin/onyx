@@ -62,7 +62,14 @@ interface RawInfo {
  * running this server is always available — hand it over.
  */
 function jsRuntimeArgs(): string[] {
-  const args = ["--js-runtimes", `node:${process.execPath}`];
+  // Node only runs the challenge-solver scripts, it doesn't ship them — without
+  // this, yt-dlp installs lacking the bundled/pip yt-dlp-ejs package hand Node
+  // nothing to execute and every challenge fails with a KeyError. npm auto-fetch
+  // only works for Deno/Bun, so Node needs the GitHub distribution explicitly.
+  const args = [
+    "--js-runtimes", `node:${process.execPath}`,
+    "--remote-components", "ejs:github",
+  ];
 
   // --cookies-from-browser: auto-detect the first browser whose cookie store
   // exists on this machine (Edge → Chrome → Brave → Firefox on Windows).
