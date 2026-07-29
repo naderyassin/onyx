@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { ArrowUpCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ModeSelector } from "@/components/home/mode-selector";
@@ -102,6 +102,7 @@ export function SettingsPanel() {
   const settings = useSettings();
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [checking, setChecking] = useState(false);
+  const [updating, setUpdating] = useState(false);
 
   const loadHealth = useCallback(async (fresh: boolean) => {
     setChecking(true);
@@ -117,6 +118,28 @@ export function SettingsPanel() {
 
   useEffect(() => {
     void loadHealth(false);
+  }, [loadHealth]);
+
+  const handleUpdateYtdlp = useCallback(async () => {
+    setUpdating(true);
+    try {
+      const res = await fetch("/api/update-ytdlp", { method: "POST" });
+      const data = (await res.json()) as { ok: boolean; output: string };
+      // Extract the most relevant line from yt-dlp's output.
+      const lines = data.output.split(/\r?\n/).filter(Boolean);
+      const summary = lines.at(-1) ?? "Update complete.";
+      if (data.ok) {
+        toast.success(summary);
+        // Refresh the version pill.
+        await loadHealth(true);
+      } else {
+        toast.error(summary || "Update failed.");
+      }
+    } catch {
+      toast.error("Could not reach the server.");
+    } finally {
+      setUpdating(false);
+    }
   }, [loadHealth]);
 
   const selectTriggerClass =
@@ -211,11 +234,29 @@ export function SettingsPanel() {
               : "Extracts media from supported sites."
           }
         >
-          {health ? (
-            <StatusPill status={health.ytdlp} />
-          ) : (
-            <span className="font-mono text-xs text-white/40">checking…</span>
-          )}
+          <div className="flex items-center gap-2">
+            {health ? (
+              <StatusPill status={health.ytdlp} />
+            ) : (
+              <span className="font-mono text-xs text-white/40">checking…</span>
+            )}
+            {health?.ytdlp.found && (
+              <Button
+                id="update-ytdlp-btn"
+                variant="ghost"
+                size="sm"
+                disabled={updating}
+                onClick={() => void handleUpdateYtdlp()}
+                className="h-8 gap-1.5 rounded-lg px-2.5 text-xs text-white/60 hover:text-white disabled:opacity-50"
+                aria-label="Update yt-dlp to the latest version"
+              >
+                <ArrowUpCircle
+                  className={cn("size-3.5", updating && "animate-spin")}
+                />
+                {updating ? "Updating…" : "Update"}
+              </Button>
+            )}
+          </div>
         </Row>
         <Row
           label="FFmpeg"

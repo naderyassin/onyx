@@ -9,6 +9,7 @@ import type {
   VideoInfo,
   VideoQuality,
 } from "@/lib/types";
+import { detectCookiesBrowser } from "@/app/api/cookies-browser/route";
 import { resolveBinaries } from "./binaries";
 import { AppError } from "./errors";
 import { parsePublicHttpUrl } from "./net";
@@ -62,9 +63,18 @@ interface RawInfo {
  */
 function jsRuntimeArgs(): string[] {
   const args = ["--js-runtimes", `node:${process.execPath}`];
-  // Opt-in cookies for sites that block anonymous/datacenter requests
-  // (YouTube on hosted servers). Set COOKIES_PATH to a Netscape-format
-  // cookies.txt uploaded next to the app.
+
+  // --cookies-from-browser: auto-detect the first browser whose cookie store
+  // exists on this machine (Edge → Chrome → Brave → Firefox on Windows).
+  // No user configuration required — just needs to be logged in to the target site.
+  const browser = detectCookiesBrowser();
+  if (browser) {
+    args.push("--cookies-from-browser", browser);
+    return args;
+  }
+
+  // Fallback: opt-in cookies.txt for sites that block anonymous requests.
+  // Set COOKIES_PATH to a Netscape-format cookies.txt, or drop the file next to the app.
   // cookies.dat: the deploy pipeline strips gitignored names (cookies.txt)
   // from the uploaded archive, so the server copy ships under this name.
   const cookies = [
@@ -75,6 +85,7 @@ function jsRuntimeArgs(): string[] {
   if (cookies) args.push("--cookies", cookies);
   return args;
 }
+
 
 /**
  * TikTok fingerprints the TLS handshake and 403s clients that don't look like
