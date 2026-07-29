@@ -86,6 +86,34 @@ function jsRuntimeArgs(): string[] {
   return args;
 }
 
+const YOUTUBE_HOSTS = /(^|\.)youtu\.be$|(^|\.)(youtube\.com|youtube-nocookie\.com)$/i;
+
+function isYouTube(url: string): boolean {
+  try {
+    return YOUTUBE_HOSTS.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * YouTube increasingly requires sign-in when requests come from datacenter IPs.
+ * The tv_embedded + web client combo bypasses this gate for the vast majority of
+ * public videos — it presents as an embedded player rather than a direct scrape,
+ * which YouTube's bot-detection scores much more leniently.
+ *
+ * ios is kept as the retry client: it uses a completely separate auth path
+ * (the mobile API) and clears blocks that tv_embedded doesn't.
+ */
+const YT_CLIENT_PRIMARY = "tv_embedded,web";
+const YT_CLIENT_RETRY = "ios,web";
+
+function youtubeClientArgs(url: string, retry = false): string[] {
+  if (!isYouTube(url)) return [];
+  const client = retry ? YT_CLIENT_RETRY : YT_CLIENT_PRIMARY;
+  return ["--extractor-args", `youtube:player_client=${client}`];
+}
+
 
 /**
  * TikTok fingerprints the TLS handshake and 403s clients that don't look like
@@ -260,7 +288,10 @@ const INFO_ATTEMPTS = 2;
 const RETRY_BASE_MS = 2_500;
 
 function isRetryable(err: unknown): boolean {
-  return err instanceof AppError && (err.code === "BLOCKED" || err.code === "RATE_LIMITED");
+  return (
+    err instanceof AppError &&
+    (err.code === "BLOCKED" || err.code === "RATE_LIMITED" || err.code === "RESTRICTED")
+  );
 }
 
 async function runInfoJson(url: string, args: string[]): Promise<RawInfo> {
@@ -269,8 +300,13 @@ async function runInfoJson(url: string, args: string[]): Promise<RawInfo> {
   const argv = [...args, ...(await impersonationArgs(bins.ytdlp.path, url)), url];
 
   for (let attempt = 1; ; attempt++) {
+    const isRetry = attempt > 1;
+    // On retry: rotate impersonation fingerprint + switch YouTube player client.
+    const attemptArgs = isRetry
+      ? [...rotateImpersonation(argv.slice(0, -1)), ...youtubeClientArgs(url, true), url]
+      : [...argv.slice(0, -1), ...youtubeClientArgs(url, false), url];
     try {
-      return await runInfoOnce(bins.ytdlp.path, attempt > 1 ? rotateImpersonation(argv) : argv);
+      return await runInfoOnce(bins.ytdlp.path, attemptArgs);
     } catch (err) {
       if (attempt >= INFO_ATTEMPTS || !isRetryable(err)) throw err;
       await new Promise((r) => setTimeout(r, RETRY_BASE_MS * attempt));
@@ -565,7 +601,11 @@ export async function startDownload(job: InternalJob, opts: DownloadOptions): Pr
   job.url = await resolveShortLink(job.url);
 
   const args = buildArgs(job, opts, ffmpegPath);
-  args.push(...(await impersonationArgs(bins.ytdlp.path, job.url)), job.url);
+  args.push(
+    ...youtubeClientArgs(job.url),
+    ...(await impersonationArgs(bins.ytdlp.path, job.url)),
+    job.url,
+  );
 
   // Kept on the job so a paused download can be respawned byte-for-byte.
   job.bin = bins.ytdlp.path;
