@@ -71,10 +71,10 @@ let jsRuntimeBroken = false;
 
 function jsRuntimeArgs(): string[] {
   if (jsRuntimeBroken) return [];
-  // Node only runs the challenge-solver scripts, it doesn't ship them — without
-  // this, yt-dlp installs lacking the bundled/pip yt-dlp-ejs package hand Node
-  // nothing to execute and every challenge fails with a KeyError. npm auto-fetch
-  // only works for Deno/Bun, so Node needs the GitHub distribution explicitly.
+  // Node runs the challenge-solver scripts but doesn't ship them. Official
+  // yt-dlp executables (what bin/ carries) bundle their own, so this only
+  // covers installs that don't — a pip yt-dlp without the yt-dlp-ejs package.
+  // GitHub rather than npm because npm auto-fetch is Deno/Bun-only.
   const args = [
     "--js-runtimes", `node:${process.execPath}`,
     "--remote-components", "ejs:github",
@@ -120,13 +120,25 @@ function isYouTube(url: string): boolean {
  *
  * ios is kept as the retry client: it uses a completely separate auth path
  * (the mobile API) and clears blocks that tv_embedded doesn't.
+ *
+ * Both combos include `web`, whose media URLs are signature-protected and so
+ * need a JS runtime to decrypt. Where that runtime is unusable (see
+ * jsRuntimeBroken) the whole request degrades to "Requested format is not
+ * available", because every playable format got dropped. tv_embedded on its
+ * own hands back already-playable URLs, so it is the one client that still
+ * works with no JS runtime at all — measured: 27 formats and a real download.
  */
 const YT_CLIENT_PRIMARY = "tv_embedded,web";
 const YT_CLIENT_RETRY = "ios,web";
+const YT_CLIENT_NO_JS = "tv_embedded";
 
 function youtubeClientArgs(url: string, retry = false): string[] {
   if (!isYouTube(url)) return [];
-  const client = retry ? YT_CLIENT_RETRY : YT_CLIENT_PRIMARY;
+  const client = jsRuntimeBroken
+    ? YT_CLIENT_NO_JS
+    : retry
+      ? YT_CLIENT_RETRY
+      : YT_CLIENT_PRIMARY;
   return ["--extractor-args", `youtube:player_client=${client}`];
 }
 
