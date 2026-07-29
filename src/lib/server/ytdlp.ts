@@ -60,8 +60,17 @@ interface RawInfo {
  * yt-dlp needs a JavaScript runtime to solve YouTube's signature challenges
  * (without one, downloads intermittently fail with 403). The Node binary
  * running this server is always available — hand it over.
+ *
+ * Some hosts run that Node subprocess inside a sandbox that breaks yt-dlp's
+ * IPC with it (extra stdout, restricted APIs, etc.) — every challenge then
+ * fails with an internal parse error instead of a clean one. Once detected
+ * (see isJscFailure), skip the JS runtime for the rest of the process
+ * lifetime: retrying it per-call would only fail the same way every time.
  */
+let jsRuntimeBroken = false;
+
 function jsRuntimeArgs(): string[] {
+  if (jsRuntimeBroken) return [];
   // Node only runs the challenge-solver scripts, it doesn't ship them — without
   // this, yt-dlp installs lacking the bundled/pip yt-dlp-ejs package hand Node
   // nothing to execute and every challenge fails with a KeyError. npm auto-fetch
@@ -259,8 +268,6 @@ function runInfoOnce(bin: string, args: string[]): Promise<RawInfo> {
       { timeout: INFO_TIMEOUT_MS, maxBuffer: MAX_JSON_BYTES, windowsHide: true },
       (err, out, stderr) => {
         if (err) {
-          // TEMP DEBUG: full stderr isn't otherwise visible in hosting logs.
-          console.error("[ytdlp stderr]", String(stderr ?? ""));
           reject(mapInfoError(err as Error & { killed?: boolean }, String(stderr ?? "")));
           return;
         }
@@ -296,11 +303,35 @@ function runInfoOnce(bin: string, args: string[]): Promise<RawInfo> {
 const INFO_ATTEMPTS = 2;
 const RETRY_BASE_MS = 2_500;
 
+// Some hosts run Node as a JS-challenge-solving subprocess inside a sandbox
+// that breaks yt-dlp's IPC with it (extra stdout, restricted APIs, etc.),
+// which surfaces as this internal parse error rather than a clean failure.
+// Not fixable from here — the reliable move is to redo the request without
+// a JS runtime at all rather than fail outright.
+function isJscFailure(err: unknown): boolean {
+  return err instanceof AppError && /\[jsc\]/i.test(err.message);
+}
+
 function isRetryable(err: unknown): boolean {
   return (
     err instanceof AppError &&
-    (err.code === "BLOCKED" || err.code === "RATE_LIMITED" || err.code === "RESTRICTED")
+    (err.code === "BLOCKED" ||
+      err.code === "RATE_LIMITED" ||
+      err.code === "RESTRICTED" ||
+      isJscFailure(err))
   );
+}
+
+function stripJsRuntimeArgs(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--js-runtimes" || args[i] === "--remote-components") {
+      i++;
+      continue;
+    }
+    out.push(args[i]);
+  }
+  return out;
 }
 
 async function runInfoJson(url: string, args: string[]): Promise<RawInfo> {
@@ -308,16 +339,21 @@ async function runInfoJson(url: string, args: string[]): Promise<RawInfo> {
   if (!bins.ytdlp.found || !bins.ytdlp.path) throw YTDLP_MISSING();
   const argv = [...args, ...(await impersonationArgs(bins.ytdlp.path, url)), url];
 
+  let dropJsRuntime = false;
   for (let attempt = 1; ; attempt++) {
     const isRetry = attempt > 1;
     // On retry: rotate impersonation fingerprint + switch YouTube player client.
-    const attemptArgs = isRetry
-      ? [...rotateImpersonation(argv.slice(0, -1)), ...youtubeClientArgs(url, true), url]
-      : [...argv.slice(0, -1), ...youtubeClientArgs(url, false), url];
+    let base = isRetry ? rotateImpersonation(argv.slice(0, -1)) : argv.slice(0, -1);
+    if (dropJsRuntime) base = stripJsRuntimeArgs(base);
+    const attemptArgs = [...base, ...youtubeClientArgs(url, isRetry), url];
     try {
       return await runInfoOnce(bins.ytdlp.path, attemptArgs);
     } catch (err) {
       if (attempt >= INFO_ATTEMPTS || !isRetryable(err)) throw err;
+      if (isJscFailure(err)) {
+        dropJsRuntime = true;
+        jsRuntimeBroken = true;
+      }
       await new Promise((r) => setTimeout(r, RETRY_BASE_MS * attempt));
     }
   }
