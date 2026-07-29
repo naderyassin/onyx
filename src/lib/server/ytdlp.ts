@@ -259,6 +259,8 @@ function runInfoOnce(bin: string, args: string[]): Promise<RawInfo> {
       { timeout: INFO_TIMEOUT_MS, maxBuffer: MAX_JSON_BYTES, windowsHide: true },
       (err, out, stderr) => {
         if (err) {
+          // TEMP DEBUG: full stderr isn't otherwise visible in hosting logs.
+          console.error("[ytdlp stderr]", String(stderr ?? ""));
           reject(mapInfoError(err as Error & { killed?: boolean }, String(stderr ?? "")));
           return;
         }
