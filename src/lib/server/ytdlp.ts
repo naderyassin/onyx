@@ -9,7 +9,7 @@ import type {
   VideoInfo,
   VideoQuality,
 } from "@/lib/types";
-import { detectCookiesBrowser } from "@/app/api/cookies-browser/route";
+import { detectCookiesBrowser } from "./cookies";
 import { resolveBinaries } from "./binaries";
 import { AppError } from "./errors";
 import { parsePublicHttpUrl } from "./net";

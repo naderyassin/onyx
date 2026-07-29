@@ -88,9 +88,9 @@ function browserExists(name: string): boolean {
 
   return paths.some((p) => {
     try {
-      // Firefox uses a Profiles directory — check it exists and is non-empty
       const stat = fs.statSync(p);
       if (stat.isDirectory()) {
+        // Firefox uses a Profiles directory — check it exists and has a default profile.
         return fs.readdirSync(p).some((f) =>
           f.includes("default") || f.includes("release"),
         );
@@ -102,7 +102,7 @@ function browserExists(name: string): boolean {
   });
 }
 
-// Cached result — detection is disk I/O, no need to repeat it every call.
+// Cached result — detection is disk I/O, no need to repeat it on every call.
 let _detected: CookiesBrowser | null | undefined = undefined;
 
 /**
