@@ -19,6 +19,12 @@
 
 # production
 /build
+/dist
+
+# electron installer build output — built by CI and uploaded as a GitHub
+# Release asset, never committed (the exe alone is well over GitHub's
+# 100MB per-file git limit)
+/public/downloads
 
 # misc
 .DS_Store

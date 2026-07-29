@@ -1,0 +1,47 @@
+name: Release Windows build
+
+# Push a version tag to ship a release, e.g.:
+#   git tag v0.2.0 && git push --tags
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Build web app + Electron installer
+        run: |
+          npm run build
+          npx electron-builder --win --publish never
+
+      - name: Patch installer icons
+        run: node scripts/patch_exe_with_overlay.js
+
+      - name: Fix NSIS CRC after icon patch
+        run: node scripts/update_nsis_crc.js
+
+      - name: Refresh auto-update checksum
+        run: node scripts/finalize_release.js
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            public/downloads/Onyx-Setup.exe `
+            public/downloads/latest.yml `
+            --title "Onyx ${{ github.ref_name }}" `
+            --generate-notes
