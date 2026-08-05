@@ -22,7 +22,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Build installer (electron:build handles web build, NSIS graphics, packaging, icon patch, CRC fix, checksum)
+      - name: Build installer (electron:build handles web build, NSIS graphics, packaging, checksum)
         run: npm run electron:build
 
       - name: Publish GitHub Release
