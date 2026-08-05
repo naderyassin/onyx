@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "electron:dev": "cross-env NODE_ENV=development electron .",
-    "electron:build": "npm run build && node scripts/generate_nsis_graphics.js && electron-builder --win --publish never && node scripts/patch_exe_with_overlay.js && node scripts/update_nsis_crc.js && node scripts/finalize_release.js"
+    "electron:build": "npm run build && node scripts/generate_nsis_graphics.js && electron-builder --win --publish never && node scripts/finalize_release.js"
   },
   "dependencies": {
     "archiver": "^8.0.0",
@@ -113,7 +113,6 @@
     "productName": "Onyx",
     "asar": false,
     "npmRebuild": false,
-    "compression": "store",
     "artifactName": "Onyx-Setup.exe",
     "directories": {
       "output": "public/downloads"
@@ -131,7 +130,6 @@
       "public/**/*",
       ".next/standalone/**/*",
       ".next/static/**/*",
-      "!node_modules/**/*",
       "!public/downloads/**/*"
     ],
     "extraResources": [
