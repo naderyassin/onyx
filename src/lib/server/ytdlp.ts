@@ -122,23 +122,31 @@ function isYouTube(url: string): boolean {
 
 /**
  * YouTube increasingly requires sign-in when requests come from datacenter IPs.
- * The tv_embedded + web client combo bypasses this gate for the vast majority of
- * public videos — it presents as an embedded player rather than a direct scrape,
- * which YouTube's bot-detection scores much more leniently.
+ * tv_embedded was yt-dlp's bypass for this but has since been dropped by
+ * yt-dlp itself (as of 2026.07.04 it logs "Skipping unsupported client" and
+ * silently falls through to whatever's left) — verified live: with only
+ * tv_embedded,web configured, tv_embedded got skipped, web alone hit YouTube's
+ * PO-token gate, and every format got dropped ("No video formats found").
+ * android_vr replaces it: same shape as tv_embedded (embedded/app player
+ * rather than a browser scrape, hands back already-playable URLs with no JS
+ * runtime needed) and confirmed working — verified live: real formats up to
+ * 360p with no PO token required.
  *
- * ios is kept as the retry client: it uses a completely separate auth path
- * (the mobile API) and clears blocks that tv_embedded doesn't.
+ * mweb is kept as the retry client: a different auth path (mobile web) that
+ * clears blocks android_vr doesn't. (ios, the previous retry client, was
+ * re-checked here and no longer works on its own — same PO-token wall as bare
+ * web — so it's been dropped rather than kept as dead weight.)
  *
- * Both combos include `web`, whose media URLs are signature-protected and so
- * need a JS runtime to decrypt. Where that runtime is unusable (see
+ * The retry combo includes `web`, whose media URLs are signature-protected and
+ * so need a JS runtime to decrypt. Where that runtime is unusable (see
  * jsRuntimeBroken) the whole request degrades to "Requested format is not
- * available", because every playable format got dropped. tv_embedded on its
+ * available", because every playable format got dropped. android_vr on its
  * own hands back already-playable URLs, so it is the one client that still
- * works with no JS runtime at all — measured: 27 formats and a real download.
+ * works with no JS runtime at all.
  */
-const YT_CLIENT_PRIMARY = "tv_embedded,web";
-const YT_CLIENT_RETRY = "ios,web";
-const YT_CLIENT_NO_JS = "tv_embedded";
+const YT_CLIENT_PRIMARY = "android_vr,web";
+const YT_CLIENT_RETRY = "mweb,web";
+const YT_CLIENT_NO_JS = "android_vr";
 
 function youtubeClientArgs(url: string, retry = false): string[] {
   if (!isYouTube(url)) return [];
