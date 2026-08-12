@@ -69,6 +69,13 @@ interface RawInfo {
  */
 let jsRuntimeBroken = false;
 
+/**
+ * Windows DPAPI (Data Protection API) decryption of browser cookies can fail,
+ * especially in sandboxed or non-standard environments. Once detected, disable
+ * browser cookie detection and rely on cookies.txt fallback instead.
+ */
+let dpapiBroken = false;
+
 function jsRuntimeArgs(): string[] {
   if (jsRuntimeBroken) return [];
   // Node runs the challenge-solver scripts but doesn't ship them. Official
@@ -83,7 +90,8 @@ function jsRuntimeArgs(): string[] {
   // --cookies-from-browser: auto-detect the first browser whose cookie store
   // exists on this machine (Edge → Chrome → Brave → Firefox on Windows).
   // No user configuration required — just needs to be logged in to the target site.
-  const browser = detectCookiesBrowser();
+  // Skip if DPAPI decryption is broken (common on Windows in sandboxed environments).
+  const browser = dpapiBroken ? null : detectCookiesBrowser();
   if (browser) {
     args.push("--cookies-from-browser", browser);
     return args;
@@ -330,8 +338,13 @@ function isRetryable(err: unknown): boolean {
     (err.code === "BLOCKED" ||
       err.code === "RATE_LIMITED" ||
       err.code === "RESTRICTED" ||
+      err.code === "DPAPI_FAILED" ||
       isJscFailure(err))
   );
+}
+
+function isDpapiFailure(err: unknown): boolean {
+  return err instanceof AppError && err.code === "DPAPI_FAILED";
 }
 
 function stripJsRuntimeArgs(args: string[]): string[] {
@@ -365,6 +378,9 @@ async function runInfoJson(url: string, args: string[]): Promise<RawInfo> {
       if (isJscFailure(err)) {
         dropJsRuntime = true;
         jsRuntimeBroken = true;
+      }
+      if (isDpapiFailure(err)) {
+        dpapiBroken = true;
       }
       await new Promise((r) => setTimeout(r, RETRY_BASE_MS * attempt));
     }
@@ -457,6 +473,13 @@ function siteOf(stderr: string): string {
 function mapInfoError(err: Error & { killed?: boolean }, stderr: string): AppError {
   if (err.killed) {
     return new AppError("TIMEOUT", "The site took too long to respond. Try again.", 504);
+  }
+  if (/Failed to decrypt with DPAPI/i.test(stderr)) {
+    return new AppError(
+      "DPAPI_FAILED",
+      "Windows failed to decrypt browser cookies. Retrying without them…",
+      502,
+    );
   }
   const errorLine = stderr
     .split(/\r?\n/)
