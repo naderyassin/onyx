@@ -574,17 +574,23 @@ function mapInfoError(err: Error & { killed?: boolean }, stderr: string): AppErr
   // A throttling site may also answer with a bot-check page instead of an error
   // code, which yt-dlp reports as a parse failure. Same soft block as the 403,
   // and it clears on a retry just as readily, so it earns the same treatment.
-  // TikTok fronts its pages with a WAF (SlardarWAF / slardar_us_waf) that
-  // answers automated clients with a ~1.5KB "Please wait…" interstitial instead
-  // of the page. Verified live: the WAF fires ahead of authentication, so a
-  // fully logged-in session (sessionid + sid_tt) is served the same stub, and
-  // chrome/safari impersonation are refused identically. Nothing client-side
-  // clears it — it wants a real browser to run the challenge JS.
+  // TikTok started fronting its pages with a WAF (SlardarWAF / slardar_us_waf)
+  // in early Aug 2026, which answers yt-dlp with a ~1.5KB "Please wait…"
+  // interstitial instead of the page. Upstream bug, not a local one:
+  // yt-dlp#17403, filed 2026-08-10, still open, and reproducing on nightly too.
+  //
+  // Not the network and not the account — verified live that a real browser on
+  // this same connection loads the very same video fine, while every yt-dlp
+  // variant gets the stub: logged out, fully logged in (sessionid + sid_tt +
+  // uid_tt), with the browser's own WAF-clearance cookies (s_v_web_id +
+  // x-web-secsdk-uid) grafted in, and under bare/chrome/safari impersonation.
+  // So this is deliberately NOT retryable: the outcome is deterministic until
+  // the extractor is fixed upstream, and a retry only costs the user a wait.
   if (/Unexpected response from webpage request/i.test(stderr)) {
     return new AppError(
-      "BLOCKED",
-      `${site} answered with a bot check instead of the video. It's blocking automated requests from this network — this usually needs a different connection, not a retry.`,
-      403,
+      "SITE_CHANGED",
+      `${site} changed its site and yt-dlp can't read it yet — a known upstream bug affecting everyone, not your connection or account. It'll need a yt-dlp update to fix.`,
+      503,
     );
   }
   if (
