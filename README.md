@@ -95,6 +95,30 @@ Optional — only needed when a binary isn't on PATH (see `.env.example`):
 |-----|---------|
 | `YTDLP_PATH` | Absolute path to the yt-dlp executable |
 | `FFMPEG_PATH` | Absolute path to the ffmpeg executable |
+| `COOKIES_PATH` | Absolute path to a Netscape-format cookies file (see Deploying below) |
+
+## Deploying (e.g. Hostinger)
+
+YouTube, Instagram, and Facebook throttle or block anonymous requests from
+server IPs much more aggressively than from a home connection. On a host,
+downloads from those sites will need a logged-in session's cookies:
+
+1. Export cookies (Netscape format) for the target site while logged in — the
+   "Get cookies.txt LOCALLY" browser extension works well.
+2. Upload the file to the server **named `cookies.dat`**, not `cookies.txt`.
+   Some upload/deploy pipelines drop `.gitignore`d filenames (`cookies.txt` is
+   gitignored on purpose, since it's a live credential — see below), and
+   `cookies.dat` survives that. Or set `COOKIES_PATH` to wherever you put it,
+   which works under either filename.
+3. Treat that file as a password, not a config value — it's a live session
+   token for the account it was exported from. Don't commit it, don't post it,
+   and prefer a path outside the web root if the host serves static files from
+   the app directory. Sessions expire; expect to re-export periodically.
+
+TikTok is unaffected by any of this — as of Aug 2026 its extractor is broken
+upstream by a TikTok-side change (yt-dlp
+[#17403](https://github.com/yt-dlp/yt-dlp/issues/17403)), so no cookies fix
+it; it needs a yt-dlp update.
 
 ## A note on use
 
