@@ -531,6 +531,18 @@ function mapInfoError(err: Error & { killed?: boolean }, stderr: string): AppErr
   if (/Private video|Video unavailable|no longer available|has been removed/i.test(stderr)) {
     return new AppError("UNAVAILABLE", "This video is private, removed, or unavailable.", 404);
   }
+  // Facebook's extractor reports a removed/restricted post as "Cannot parse
+  // data", which reads like a bug in the app. Verified live: a deleted video, a
+  // made-up video id, and a working video all go down this same path — the
+  // working one extracts fine, so reaching here means there was no video in the
+  // page, not that parsing is broken.
+  if (/Cannot parse data/i.test(stderr)) {
+    return new AppError(
+      "UNAVAILABLE",
+      "This post has no downloadable video — it may have been removed, or be private.",
+      404,
+    );
+  }
   // yt-dlp wraps every HTTP failure in "Unable to download webpage", so the real
   // status has to be read out before anything gets blamed on the connection.
   const status = httpStatus(stderr);
@@ -562,6 +574,19 @@ function mapInfoError(err: Error & { killed?: boolean }, stderr: string): AppErr
   // A throttling site may also answer with a bot-check page instead of an error
   // code, which yt-dlp reports as a parse failure. Same soft block as the 403,
   // and it clears on a retry just as readily, so it earns the same treatment.
+  // TikTok fronts its pages with a WAF (SlardarWAF / slardar_us_waf) that
+  // answers automated clients with a ~1.5KB "Please wait…" interstitial instead
+  // of the page. Verified live: the WAF fires ahead of authentication, so a
+  // fully logged-in session (sessionid + sid_tt) is served the same stub, and
+  // chrome/safari impersonation are refused identically. Nothing client-side
+  // clears it — it wants a real browser to run the challenge JS.
+  if (/Unexpected response from webpage request/i.test(stderr)) {
+    return new AppError(
+      "BLOCKED",
+      `${site} answered with a bot check instead of the video. It's blocking automated requests from this network — this usually needs a different connection, not a retry.`,
+      403,
+    );
+  }
   if (
     /Unable to extract universal data|Unable to extract webpage video data|Unable to extract initial state/i.test(
       stderr,
