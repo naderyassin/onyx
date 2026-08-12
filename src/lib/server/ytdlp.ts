@@ -70,11 +70,19 @@ interface RawInfo {
 let jsRuntimeBroken = false;
 
 /**
- * Windows DPAPI (Data Protection API) decryption of browser cookies can fail,
- * especially in sandboxed or non-standard environments. Once detected, disable
- * browser cookie detection and rely on cookies.txt fallback instead.
+ * Reading cookies straight out of a browser fails for two unrelated reasons on
+ * Windows, and both are permanent for the life of the process:
+ *
+ *   - Chromium keeps an exclusive lock on its cookie DB the whole time it is
+ *     running, so yt-dlp's copy step dies with "Could not copy Chrome cookie
+ *     database" / PermissionError (yt-dlp#7271). Measured here: with Chrome and
+ *     Edge open, even a FILE_SHARE_READ|WRITE open is refused.
+ *   - The DPAPI unwrap of the master key can fail outright (yt-dlp#10927).
+ *
+ * Neither clears on a retry while the browser stays open, so the first failure
+ * latches this flag and every later call skips browser extraction entirely.
  */
-let dpapiBroken = false;
+let browserCookiesBroken = false;
 
 function jsRuntimeArgs(): string[] {
   if (jsRuntimeBroken) return [];
@@ -87,26 +95,28 @@ function jsRuntimeArgs(): string[] {
     "--remote-components", "ejs:github",
   ];
 
-  // --cookies-from-browser: auto-detect the first browser whose cookie store
-  // exists on this machine (Edge → Chrome → Brave → Firefox on Windows).
-  // No user configuration required — just needs to be logged in to the target site.
-  // Skip if DPAPI decryption is broken (common on Windows in sandboxed environments).
-  const browser = dpapiBroken ? null : detectCookiesBrowser();
-  if (browser) {
-    args.push("--cookies-from-browser", browser);
-    return args;
-  }
-
-  // Fallback: opt-in cookies.txt for sites that block anonymous requests.
-  // Set COOKIES_PATH to a Netscape-format cookies.txt, or drop the file next to the app.
-  // cookies.dat: the deploy pipeline strips gitignored names (cookies.txt)
-  // from the uploaded archive, so the server copy ships under this name.
+  // An explicit cookies.txt wins over browser auto-detect: it is a plain file
+  // nothing holds a lock on, so it works with the browser open, which is the
+  // normal case. Set COOKIES_PATH to a Netscape-format cookies.txt, or drop the
+  // file next to the app. cookies.dat: the deploy pipeline strips gitignored
+  // names (cookies.txt) from the uploaded archive, so the server copy ships
+  // under this name.
   const cookies = [
     process.env.COOKIES_PATH,
     path.join(process.cwd(), "cookies.txt"),
     path.join(process.cwd(), "cookies.dat"),
   ].find((p) => p && fs.existsSync(p));
-  if (cookies) args.push("--cookies", cookies);
+  if (cookies) {
+    args.push("--cookies", cookies);
+    return args;
+  }
+
+  // --cookies-from-browser: auto-detect the first browser whose cookie store
+  // exists on this machine (Edge → Chrome → Brave → Firefox on Windows).
+  // No user configuration required — just needs to be logged in to the target
+  // site, and the browser closed (see browserCookiesBroken).
+  const browser = browserCookiesBroken ? null : detectCookiesBrowser();
+  if (browser) args.push("--cookies-from-browser", browser);
   return args;
 }
 
@@ -346,13 +356,13 @@ function isRetryable(err: unknown): boolean {
     (err.code === "BLOCKED" ||
       err.code === "RATE_LIMITED" ||
       err.code === "RESTRICTED" ||
-      err.code === "DPAPI_FAILED" ||
+      err.code === "COOKIES_FAILED" ||
       isJscFailure(err))
   );
 }
 
-function isDpapiFailure(err: unknown): boolean {
-  return err instanceof AppError && err.code === "DPAPI_FAILED";
+function isCookieFailure(err: unknown): boolean {
+  return err instanceof AppError && err.code === "COOKIES_FAILED";
 }
 
 function stripJsRuntimeArgs(args: string[]): string[] {
@@ -387,8 +397,8 @@ async function runInfoJson(url: string, args: string[]): Promise<RawInfo> {
         dropJsRuntime = true;
         jsRuntimeBroken = true;
       }
-      if (isDpapiFailure(err)) {
-        dpapiBroken = true;
+      if (isCookieFailure(err)) {
+        browserCookiesBroken = true;
       }
       await new Promise((r) => setTimeout(r, RETRY_BASE_MS * attempt));
     }
@@ -482,10 +492,17 @@ function mapInfoError(err: Error & { killed?: boolean }, stderr: string): AppErr
   if (err.killed) {
     return new AppError("TIMEOUT", "The site took too long to respond. Try again.", 504);
   }
-  if (/Failed to decrypt with DPAPI/i.test(stderr)) {
+  // Both cookie-extraction failures land here. The retry drops browser cookies
+  // (see browserCookiesBroken), so this message is only ever the *final* answer
+  // when the retry also failed — hence naming the fix rather than the symptom.
+  if (
+    /Failed to decrypt with DPAPI|Could not copy Chrome cookie database|could not find (?:\w+ )?cookies database/i.test(
+      stderr,
+    )
+  ) {
     return new AppError(
-      "DPAPI_FAILED",
-      "Windows failed to decrypt browser cookies. Retrying without them…",
+      "COOKIES_FAILED",
+      "Couldn't read browser cookies (your browser holds them locked while it's open). Close the browser, or drop a cookies.txt next to the app.",
       502,
     );
   }
