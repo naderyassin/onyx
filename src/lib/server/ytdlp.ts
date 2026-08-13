@@ -101,11 +101,17 @@ function jsRuntimeArgs(): string[] {
   // file next to the app. cookies.dat: the deploy pipeline strips gitignored
   // names (cookies.txt) from the uploaded archive, so the server copy ships
   // under this name.
-  const cookies = [
+  const candidates = [
     process.env.COOKIES_PATH,
     path.join(process.cwd(), "cookies.txt"),
     path.join(process.cwd(), "cookies.dat"),
-  ].find((p) => p && fs.existsSync(p));
+  ];
+  console.error(
+    "[ytdlp] cwd:", process.cwd(),
+    "| cookie candidates:",
+    candidates.map((p) => `${p ?? "(unset)"}=${p && fs.existsSync(p) ? "FOUND" : "missing"}`).join(" "),
+  );
+  const cookies = candidates.find((p) => p && fs.existsSync(p));
   if (cookies) {
     args.push("--cookies", cookies);
     return args;
