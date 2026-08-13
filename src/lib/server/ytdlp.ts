@@ -389,6 +389,7 @@ async function runInfoJson(url: string, args: string[]): Promise<RawInfo> {
     let base = isRetry ? rotateImpersonation(argv.slice(0, -1)) : argv.slice(0, -1);
     if (dropJsRuntime) base = stripJsRuntimeArgs(base);
     const attemptArgs = [...base, ...youtubeClientArgs(url, isRetry), url];
+    console.error("[ytdlp] argv:", attemptArgs.join(" "));
     try {
       return await runInfoOnce(bins.ytdlp.path, attemptArgs);
     } catch (err) {
