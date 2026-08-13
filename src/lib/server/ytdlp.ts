@@ -489,6 +489,10 @@ function siteOf(stderr: string): string {
 }
 
 function mapInfoError(err: Error & { killed?: boolean }, stderr: string): AppError {
+  // yt-dlp's raw stderr never reaches anywhere else — this is the only way to
+  // see what it actually said when the friendly message above doesn't explain
+  // enough to debug a live failure.
+  console.error("[ytdlp]", stderr.slice(0, 4000));
   if (err.killed) {
     return new AppError("TIMEOUT", "The site took too long to respond. Try again.", 504);
   }
