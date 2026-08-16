@@ -28,9 +28,22 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
-          gh release create "${{ github.ref_name }}" `
-            public/downloads/Onyx-Setup.exe `
-            public/downloads/latest.yml `
-            --title "Onyx ${{ github.ref_name }}" `
-            --generate-notes
+          # .blockmap rides along so electron-updater can fetch a differential
+          # update instead of the whole ~160MB installer.
+          $assets = @(
+            "public/downloads/Onyx-Setup.exe",
+            "public/downloads/Onyx-Setup.exe.blockmap",
+            "public/downloads/latest.yml"
+          )
+          # The release may already exist -- `gh release create` makes the tag,
+          # so publishing one by hand fires this workflow and then collides with
+          # it ("a release with the same tag name already exists"). Upload into
+          # whatever is there instead of failing the run.
+          gh release view "$env:TAG" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload "$env:TAG" @assets --clobber
+          } else {
+            gh release create "$env:TAG" @assets --title "Onyx $env:TAG" --generate-notes
+          }
