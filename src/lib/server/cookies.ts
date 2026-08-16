@@ -111,9 +111,16 @@ let _detected: CookiesBrowser | null | undefined = undefined;
  */
 export function detectCookiesBrowser(): CookiesBrowser | null {
   if (_detected !== undefined) return _detected;
+  // Windows deliberately skips every Chromium browser: since v127 they encrypt
+  // the cookie DB with App-Bound Encryption, and yt-dlp cannot read it at all
+  // (yt-dlp#10927 / #7271) — verified live here, Edge fails "Failed to decrypt
+  // with DPAPI" and Chrome "Could not copy Chrome cookie database", every time.
+  // Offering them anyway made every Windows request spend its first attempt on
+  // a guaranteed failure, burning the single retry that exists for real blocks.
+  // Firefox stays: plain sqlite, no OS crypto, still readable there.
   const priority: CookiesBrowser[] =
     process.platform === "win32"
-      ? ["edge", "chrome", "brave", "firefox"]
+      ? ["firefox"]
       : process.platform === "darwin"
         ? ["chrome", "safari", "firefox", "brave"]
         : ["chrome", "firefox", "brave"];

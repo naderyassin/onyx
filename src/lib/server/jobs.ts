@@ -55,6 +55,8 @@ export interface InternalJob {
   argv?: string[];
   /** One-shot respawn under a different browser fingerprint after a block. */
   retriedBlocked?: boolean;
+  /** One-shot retry without auto-detected browser cookies when Windows cannot read them. */
+  retriedBrowserCookies?: boolean;
   /** Whole-playlist job — downloads into `contentDir`, then gets zipped. */
   isPlaylist?: boolean;
   /** Where yt-dlp writes files (a subdir for playlists, `dir` otherwise). */

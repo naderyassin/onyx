@@ -9,8 +9,9 @@ import type {
   VideoInfo,
   VideoQuality,
 } from "@/lib/types";
-import { detectCookiesBrowser } from "./cookies";
 import { resolveBinaries } from "./binaries";
+import { findCookieFile } from "./cookie-file";
+import { detectCookiesBrowser } from "./cookies";
 import { AppError } from "./errors";
 import { parsePublicHttpUrl } from "./net";
 import { isTerminal, type InternalJob } from "./jobs";
@@ -68,20 +69,6 @@ interface RawInfo {
  * lifetime: retrying it per-call would only fail the same way every time.
  */
 let jsRuntimeBroken = false;
-
-/**
- * Reading cookies straight out of a browser fails for two unrelated reasons on
- * Windows, and both are permanent for the life of the process:
- *
- *   - Chromium keeps an exclusive lock on its cookie DB the whole time it is
- *     running, so yt-dlp's copy step dies with "Could not copy Chrome cookie
- *     database" / PermissionError (yt-dlp#7271). Measured here: with Chrome and
- *     Edge open, even a FILE_SHARE_READ|WRITE open is refused.
- *   - The DPAPI unwrap of the master key can fail outright (yt-dlp#10927).
- *
- * Neither clears on a retry while the browser stays open, so the first failure
- * latches this flag and every later call skips browser extraction entirely.
- */
 let browserCookiesBroken = false;
 
 function jsRuntimeArgs(): string[] {
@@ -95,35 +82,22 @@ function jsRuntimeArgs(): string[] {
     "--remote-components", "ejs:github",
   ];
 
-  // An explicit cookies.txt wins over browser auto-detect: it is a plain file
-  // nothing holds a lock on, so it works with the browser open, which is the
-  // normal case. Set COOKIES_PATH to a Netscape-format cookies.txt, or drop the
-  // file next to the app. cookies.dat: the deploy pipeline strips gitignored
-  // names (cookies.txt) from the uploaded archive, so the server copy ships
-  // under this name.
-  const candidates = [
-    process.env.COOKIES_PATH,
-    path.join(process.cwd(), "cookies.txt"),
-    path.join(process.cwd(), "cookies.dat"),
-  ];
-  console.error(
-    "[ytdlp] cwd:", process.cwd(),
-    "| cookie candidates:",
-    candidates.map((p) => `${p ?? "(unset)"}=${p && fs.existsSync(p) ? "FOUND" : "missing"}`).join(" "),
-  );
-  const cookies = candidates.find((p) => p && fs.existsSync(p));
-  if (cookies) {
-    args.push("--cookies", cookies);
-    return args;
-  }
-
-  // --cookies-from-browser: auto-detect the first browser whose cookie store
-  // exists on this machine (Edge → Chrome → Brave → Firefox on Windows).
-  // No user configuration required — just needs to be logged in to the target
-  // site, and the browser closed (see browserCookiesBroken).
-  const browser = browserCookiesBroken ? null : detectCookiesBrowser();
-  if (browser) args.push("--cookies-from-browser", browser);
   return args;
+}
+
+function cookieArgs(): string[] {
+  // An explicit Netscape-format cookie file is independent of the JavaScript
+  // runtime fallback. Hosted YouTube requests still need it after that fallback.
+  const cookies = findCookieFile();
+  if (cookies) return ["--cookies", cookies];
+
+  // Desktop fallback: if the user is signed in in a browser yt-dlp can actually
+  // read on this platform, those cookies clear YouTube's anonymous 403s. On
+  // Windows that means Firefox only (see detectCookiesBrowser). If the browser
+  // has the cookie DB locked, the first failure latches this off so retries do
+  // not keep failing for the same reason.
+  const browser = browserCookiesBroken ? null : detectCookiesBrowser();
+  return browser ? ["--cookies-from-browser", browser] : [];
 }
 
 const YOUTUBE_HOSTS = /(^|\.)youtu\.be$|(^|\.)(youtube\.com|youtube-nocookie\.com)$/i;
@@ -215,6 +189,19 @@ function rotateImpersonation(argv: string[]): string[] {
   if (i === -1 || i + 1 >= argv.length) return argv;
   const next = [...argv];
   next[i + 1] = RETRY_IMPERSONATE_TARGET;
+  return next;
+}
+
+/**
+ * The download-time twin of the info retry's client switch. Impersonation is
+ * the only thing a blocked download used to rotate, and YouTube argv carries no
+ * `--impersonate` — so a YouTube 403 got no second attempt at all.
+ */
+function rotateYoutubeClient(argv: string[]): string[] {
+  const i = argv.indexOf("--extractor-args");
+  if (i === -1 || !argv[i + 1]?.startsWith("youtube:player_client=")) return argv;
+  const next = [...argv];
+  next[i + 1] = `youtube:player_client=${jsRuntimeBroken ? YT_CLIENT_NO_JS : YT_CLIENT_RETRY}`;
   return next;
 }
 
@@ -356,6 +343,10 @@ function isJscFailure(err: unknown): boolean {
   return err instanceof AppError && /\[jsc\]/i.test(err.message);
 }
 
+function isCookieFailure(err: unknown): boolean {
+  return err instanceof AppError && err.code === "COOKIES_FAILED";
+}
+
 function isRetryable(err: unknown): boolean {
   return (
     err instanceof AppError &&
@@ -365,10 +356,6 @@ function isRetryable(err: unknown): boolean {
       err.code === "COOKIES_FAILED" ||
       isJscFailure(err))
   );
-}
-
-function isCookieFailure(err: unknown): boolean {
-  return err instanceof AppError && err.code === "COOKIES_FAILED";
 }
 
 function stripJsRuntimeArgs(args: string[]): string[] {
@@ -383,17 +370,31 @@ function stripJsRuntimeArgs(args: string[]): string[] {
   return out;
 }
 
+function stripBrowserCookieArgs(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--cookies-from-browser") {
+      i++;
+      continue;
+    }
+    out.push(args[i]);
+  }
+  return out;
+}
+
 async function runInfoJson(url: string, args: string[]): Promise<RawInfo> {
   const bins = await resolveBinaries();
   if (!bins.ytdlp.found || !bins.ytdlp.path) throw YTDLP_MISSING();
   const argv = [...args, ...(await impersonationArgs(bins.ytdlp.path, url)), url];
 
   let dropJsRuntime = false;
+  let dropBrowserCookies = false;
   for (let attempt = 1; ; attempt++) {
     const isRetry = attempt > 1;
     // On retry: rotate impersonation fingerprint + switch YouTube player client.
     let base = isRetry ? rotateImpersonation(argv.slice(0, -1)) : argv.slice(0, -1);
     if (dropJsRuntime) base = stripJsRuntimeArgs(base);
+    if (dropBrowserCookies) base = stripBrowserCookieArgs(base);
     const attemptArgs = [...base, ...youtubeClientArgs(url, isRetry), url];
     console.error("[ytdlp] argv:", attemptArgs.join(" "));
     try {
@@ -405,6 +406,7 @@ async function runInfoJson(url: string, args: string[]): Promise<RawInfo> {
         jsRuntimeBroken = true;
       }
       if (isCookieFailure(err)) {
+        dropBrowserCookies = true;
         browserCookiesBroken = true;
       }
       await new Promise((r) => setTimeout(r, RETRY_BASE_MS * attempt));
@@ -413,7 +415,7 @@ async function runInfoJson(url: string, args: string[]): Promise<RawInfo> {
 }
 
 export async function fetchVideoInfo(url: string): Promise<VideoInfo> {
-  let raw = await runInfoJson(url, ["-J", "--no-playlist", "--no-warnings", ...jsRuntimeArgs()]);
+  let raw = await runInfoJson(url, ["-J", "--no-playlist", "--no-warnings", ...jsRuntimeArgs(), ...cookieArgs()]);
   if (raw._type === "playlist") raw = firstEntry(raw) ?? raw;
   return normalize(raw, url);
 }
@@ -426,7 +428,7 @@ export async function fetchVideoInfo(url: string): Promise<VideoInfo> {
 export async function fetchInfo(rawUrl: string): Promise<InfoResult> {
   // Resolved once here; every path below (including fetchVideoInfo) inherits it.
   const url = await resolveShortLink(rawUrl);
-  const flat = await runInfoJson(url, ["-J", "--flat-playlist", "--no-warnings", ...jsRuntimeArgs()]);
+  const flat = await runInfoJson(url, ["-J", "--flat-playlist", "--no-warnings", ...jsRuntimeArgs(), ...cookieArgs()]);
 
   const entries = (flat.entries ?? []).filter((e): e is RawInfo => !!e);
   if (flat._type === "playlist" && entries.length > 0) {
@@ -503,9 +505,6 @@ function mapInfoError(err: Error & { killed?: boolean }, stderr: string): AppErr
   if (err.killed) {
     return new AppError("TIMEOUT", "The site took too long to respond. Try again.", 504);
   }
-  // Both cookie-extraction failures land here. The retry drops browser cookies
-  // (see browserCookiesBroken), so this message is only ever the *final* answer
-  // when the retry also failed — hence naming the fix rather than the symptom.
   if (
     /Failed to decrypt with DPAPI|Could not copy Chrome cookie database|could not find (?:\w+ )?cookies database/i.test(
       stderr,
@@ -513,7 +512,7 @@ function mapInfoError(err: Error & { killed?: boolean }, stderr: string): AppErr
   ) {
     return new AppError(
       "COOKIES_FAILED",
-      "Couldn't read browser cookies (your browser holds them locked while it's open). Close the browser, or drop a cookies.txt next to the app.",
+      "Couldn't read browser cookies. Import a cookies.txt file in Settings, or close the browser and restart Onyx.",
       502,
     );
   }
@@ -834,6 +833,7 @@ function buildArgs(job: InternalJob, opts: DownloadOptions, ffmpegPath?: string)
     "--fragment-retries",
     "3",
     ...jsRuntimeArgs(),
+    ...cookieArgs(),
   ];
 
   if (opts.playlist) {
@@ -1150,6 +1150,39 @@ function finalize(job: InternalJob, code: number | null): void {
     job.status = "canceled";
     return;
   }
+  // Chromium can lock its cookie database or reject Windows DPAPI decryption.
+  // Public media can still work anonymously, so retry without only the
+  // auto-detected browser source. An explicitly imported cookies.txt stays.
+  if (
+    code !== 0 &&
+    isRawCookieFailure(job.error) &&
+    !job.retriedBrowserCookies &&
+    job.argv?.includes("--cookies-from-browser")
+  ) {
+    job.retriedBrowserCookies = true;
+    browserCookiesBroken = true;
+    job.error = undefined;
+    job.argv = stripBrowserCookieArgs(job.argv);
+    spawnYtdlp(job);
+    return;
+  }
+  // A block gets one respawn under a different fingerprint or YouTube player
+  // client before the job is failed — same rationale as the info retry. Sits
+  // ahead of the playlist branch because a whole-list job is the one that gets
+  // blocked most, and used to fall straight through to "none of the videos
+  // could be downloaded" with no second attempt at all. Redoing the list costs
+  // nothing: --download-archive makes the respawn skip whatever already landed.
+  // If neither rotation applies the argv comes back unchanged and a repeat would
+  // do nothing differently, so the job fails now.
+  const status = httpStatus(job.error ?? "");
+  const rotated = job.argv ? rotateYoutubeClient(rotateImpersonation(job.argv)) : undefined;
+  if (code !== 0 && (status === 401 || status === 403) && !job.retriedBlocked && rotated !== job.argv) {
+    job.retriedBlocked = true;
+    job.error = undefined;
+    job.argv = rotated;
+    spawnYtdlp(job);
+    return;
+  }
   if (job.isPlaylist) {
     // With --ignore-errors yt-dlp may exit non-zero after skipping items, so we
     // judge success by whether anything actually landed on disk.
@@ -1173,26 +1206,27 @@ function finalize(job: InternalJob, code: number | null): void {
     job.error = "Download finished but the output file could not be located.";
     return;
   }
-  // A block at download time gets one respawn under a different browser
-  // fingerprint before the job is failed — same rationale as the info retry.
-  const status = httpStatus(job.error ?? "");
-  const rotated = job.argv ? rotateImpersonation(job.argv) : undefined;
-  if ((status === 401 || status === 403) && !job.retriedBlocked && rotated !== job.argv) {
-    job.retriedBlocked = true;
-    job.error = undefined;
-    job.argv = rotated;
-    spawnYtdlp(job);
-    return;
-  }
   job.status = "error";
   job.error = friendlyDownloadError(job.error);
 }
 
+function isRawCookieFailure(raw?: string): boolean {
+  return Boolean(
+    raw &&
+      /Failed to decrypt with DPAPI|Could not copy Chrome cookie database|could not find (?:\w+ )?cookies database/i.test(
+        raw,
+      ),
+  );
+}
+
 function friendlyDownloadError(raw?: string): string {
   if (!raw) return "The download failed. Try a different quality or check the link.";
+  if (isRawCookieFailure(raw)) {
+    return "Couldn't read browser cookies. Import a cookies.txt file in Settings, or close Chrome/Edge/Brave completely and restart Onyx.";
+  }
   const status = httpStatus(raw);
   if (status === 401 || status === 403) {
-    return "The site refused the download (HTTP 403). It's blocking anonymous downloads right now — try again later.";
+    return "The site refused the download (HTTP 403). Import a signed-in cookies.txt file in Settings, then retry.";
   }
   if (status === 429) {
     return "The site is rate-limiting this machine (HTTP 429). Wait a few minutes and try again.";
