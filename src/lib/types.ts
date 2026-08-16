@@ -115,6 +115,8 @@ export interface BinaryStatus {
 export interface HealthStatus {
   ytdlp: BinaryStatus;
   ffmpeg: BinaryStatus;
+  cookies?: boolean;
+  cookieImport?: boolean;
 }
 
 export interface HistoryEntry {

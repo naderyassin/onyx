@@ -70,8 +70,9 @@ async function createWindow() {
       : path.join(process.resourcesPath, 'bin');
     
     env.PATH = `${binDir};${process.env.PATH}`;
-    env.YT_DLP_PATH = path.join(binDir, 'yt-dlp.exe');
+    env.YTDLP_PATH = path.join(binDir, 'yt-dlp.exe');
     env.FFMPEG_PATH = path.join(binDir, 'ffmpeg.exe');
+    env.COOKIES_PATH = path.join(app.getPath('userData'), 'cookies.txt');
 
     if (isDev) {
       nextProcess = spawn('node', [serverPath, 'dev', '-p', port.toString()], { env, stdio: 'inherit' });

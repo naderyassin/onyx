@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { ArrowUpCircle, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowUpCircle, FileUp, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ModeSelector } from "@/components/home/mode-selector";
@@ -103,6 +103,8 @@ export function SettingsPanel() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [checking, setChecking] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [updatingCookies, setUpdatingCookies] = useState(false);
+  const cookieInput = useRef<HTMLInputElement>(null);
 
   const loadHealth = useCallback(async (fresh: boolean) => {
     setChecking(true);
@@ -139,6 +141,40 @@ export function SettingsPanel() {
       toast.error("Could not reach the server.");
     } finally {
       setUpdating(false);
+    }
+  }, [loadHealth]);
+
+  const handleCookieFile = useCallback(async (file?: File) => {
+    if (!file) return;
+    setUpdatingCookies(true);
+    try {
+      const res = await fetch("/api/cookies", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+        body: await file.text(),
+      });
+      const data = (await res.json()) as { installed?: boolean; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Could not import cookies.");
+      toast.success("Cookies imported. You can retry the playlist now.");
+      await loadHealth(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not import cookies.");
+    } finally {
+      setUpdatingCookies(false);
+    }
+  }, [loadHealth]);
+
+  const handleRemoveCookies = useCallback(async () => {
+    setUpdatingCookies(true);
+    try {
+      const res = await fetch("/api/cookies", { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      toast("Imported cookies removed");
+      await loadHealth(true);
+    } catch {
+      toast.error("Could not remove the cookie file.");
+    } finally {
+      setUpdatingCookies(false);
     }
   }, [loadHealth]);
 
@@ -210,6 +246,50 @@ export function SettingsPanel() {
           />
         </Row>
       </Section>
+
+      {health?.cookieImport && <Section
+        title="YouTube access"
+        description="Use your signed-in session for playlists that YouTube blocks anonymously."
+      >
+        <Row
+          label="cookies.txt"
+          hint="Export a Netscape-format cookies.txt from your browser, then import it here. It stays on this PC."
+        >
+          <div className="flex items-center gap-2">
+            <input
+              ref={cookieInput}
+              type="file"
+              accept=".txt,text/plain"
+              className="hidden"
+              onChange={(event) => {
+                void handleCookieFile(event.target.files?.[0]);
+                event.target.value = "";
+              }}
+            />
+            <Button
+              variant="outline"
+              disabled={updatingCookies}
+              onClick={() => cookieInput.current?.click()}
+              className="h-10 gap-2 rounded-xl border-white/15 bg-transparent px-4 hover:bg-white/[0.06]"
+            >
+              <FileUp className="size-4" />
+              {health?.cookies ? "Replace" : "Import"}
+            </Button>
+            {health?.cookies && (
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={updatingCookies}
+                onClick={() => void handleRemoveCookies()}
+                aria-label="Remove imported cookies"
+                className="size-10 rounded-xl text-white/55 hover:text-destructive"
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            )}
+          </div>
+        </Row>
+      </Section>}
 
       <Section
         title="System"
